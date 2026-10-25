@@ -542,22 +542,27 @@ function escapeHtml(str) {
 // ==========================================================================
 function connectLiveRoom() {
   isWatchTogether = true;
-  btnModeToggle.classList.add('active-live');
   statusDot.className = 'status-dot waiting';
   modeLabel.textContent = 'Connecting...';
-  commentsSubtitle.textContent = 'Live Room — Synchronized playback';
+  commentsSubtitle.textContent = 'Connecting to room...';
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws/live`;
 
   if (socket) {
-    socket.close();
+    try { socket.close(); } catch (e) {}
   }
 
   socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
-    showToast('Connected to Live Room! 🟢');
+    // If client is already watching a reel, share it with the room if we are sole viewer
+    if (historyPointer >= 0 && history[historyPointer] && onlineCount <= 1) {
+      socket.send(JSON.stringify({
+        type: 'change_reel',
+        reel: history[historyPointer]
+      }));
+    }
   };
 
   socket.onmessage = (event) => {
@@ -570,38 +575,24 @@ function connectLiveRoom() {
   };
 
   socket.onclose = () => {
-    if (isWatchTogether) {
-      statusDot.className = 'status-dot';
-      modeLabel.textContent = 'Live Reconnecting...';
-      setTimeout(() => {
-        if (isWatchTogether) connectLiveRoom();
-      }, 3000);
-    }
+    statusDot.className = 'status-dot';
+    modeLabel.textContent = 'Reconnecting...';
+    setTimeout(() => {
+      connectLiveRoom();
+    }, 2500);
   };
-}
-
-function disconnectLiveRoom() {
-  isWatchTogether = false;
-  if (socket) {
-    socket.close();
-    socket = null;
-  }
-  btnModeToggle.classList.remove('active-live');
-  statusDot.className = 'status-dot';
-  modeLabel.textContent = 'Watch Together';
-  commentsSubtitle.textContent = 'Private local comments';
-
-  if (history[historyPointer]) updateSideRailUI(history[historyPointer]);
-  showToast('Switched to Single View');
 }
 
 function handleLiveMessage(data) {
   switch (data.type) {
     case 'init_state':
       if (data.current_reel) {
-        history.push(data.current_reel);
-        historyPointer = history.length - 1;
-        playReel(data.current_reel, false);
+        // If we haven't played anything or if there are 2+ viewers online, sync to room reel
+        if (history.length === 0 || (data.online_count && data.online_count >= 2)) {
+          history.push(data.current_reel);
+          historyPointer = history.length - 1;
+          playReel(data.current_reel, false);
+        }
       }
       if (data.comments) {
         liveComments = data.comments;
@@ -612,10 +603,19 @@ function handleLiveMessage(data) {
         if (history[historyPointer]) updateSideRailUI(history[historyPointer]);
       }
       updatePresence(data.online_count || 1);
+      if (data.online_count >= 2) {
+        showToast('Partner online! Watching together 🎬');
+      }
       break;
 
     case 'presence_update':
+      const prevCount = onlineCount;
       updatePresence(data.online_count);
+      if (data.online_count >= 2 && prevCount < 2) {
+        showToast('Partner joined! Watching together 🎬');
+      } else if (data.online_count < 2 && prevCount >= 2) {
+        showToast('Partner went offline');
+      }
       break;
 
     case 'sync_reel':
@@ -666,21 +666,25 @@ function handleLiveMessage(data) {
 
 function updatePresence(count) {
   onlineCount = count;
-  if (count > 1) {
+  if (count >= 2) {
+    btnModeToggle.classList.add('active-live');
     statusDot.className = 'status-dot connected';
-    modeLabel.textContent = `Live (${count} online) 🟢`;
+    modeLabel.textContent = `Watch Together (${count}) 🟢`;
+    commentsSubtitle.textContent = `Live synchronized with ${count} viewers`;
   } else {
+    btnModeToggle.classList.remove('active-live');
     statusDot.className = 'status-dot waiting';
-    modeLabel.textContent = 'Live (1 online)';
+    modeLabel.textContent = '1 Online';
+    commentsSubtitle.textContent = 'Live Room — Waiting for partner';
   }
 }
 
-// Mode Toggle Button (Single View <--> Watch Together)
+// Mode Button shows live connection status
 btnModeToggle.addEventListener('click', () => {
-  if (isWatchTogether) {
-    disconnectLiveRoom();
+  if (onlineCount >= 2) {
+    showToast(`Watching together live (${onlineCount} online) 🟢`);
   } else {
-    connectLiveRoom();
+    showToast('Auto-connected: Waiting for partner to join... ⏳');
   }
 });
 
@@ -794,12 +798,18 @@ async function init() {
     const res = await fetch('reels.json');
     allUrls = await res.json();
 
-    // Start in Single View
+    // Start playback with a random reel immediately
     const firstReel = pickRandomReel();
-    history.push(firstReel);
-    historyPointer = 0;
-    playReel(firstReel, false);
+    if (firstReel) {
+      history.push(firstReel);
+      historyPointer = 0;
+      playReel(firstReel, false);
+    }
     prepareNextPreload();
+
+    // Automatically connect to live room immediately!
+    // If 2 users are online, they connect together automatically without clicking anything!
+    connectLiveRoom();
   } catch (err) {
     console.error('Failed to load reels.json:', err);
   }
