@@ -39,6 +39,7 @@ const loveIcon = document.getElementById('loveIcon');
 const loveCount = document.getElementById('loveCount');
 const btnComment = document.getElementById('btnComment');
 const commentsCount = document.getElementById('commentsCount');
+const btnSendInbox = document.getElementById('btnSendInbox');
 const scrubberBar = document.getElementById('scrubberBar');
 const scrubberFill = document.getElementById('scrubberFill');
 
@@ -277,6 +278,49 @@ function syncPlayPause(isPaused) {
 
 // Button Clicks
 btnLove.addEventListener('click', () => toggleLove(false));
+
+// Send Video to Telegram Inbox via Bot
+if (btnSendInbox) {
+  btnSendInbox.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (historyPointer < 0 || !history[historyPointer]) {
+      showToast('No video playing');
+      return;
+    }
+
+    const currentReel = history[historyPointer];
+    const tg = window.Telegram?.WebApp;
+    const initData = tg?.initData || '';
+
+    if (tg?.HapticFeedback) {
+      tg.HapticFeedback.impactOccurred('medium');
+    }
+
+    showToast('Sending video to bot inbox... ⏳');
+
+    try {
+      const res = await fetch('/api/send_to_inbox', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          init_data: initData,
+          reel_url: currentReel.url
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (tg?.HapticFeedback) {
+          tg.HapticFeedback.notificationOccurred('success');
+        }
+        showToast('Video sent to your Telegram inbox! 📥');
+      } else {
+        showToast(data.error || 'Failed to send video');
+      }
+    } catch (err) {
+      showToast('Error sending video');
+    }
+  });
+}
 
 // ==========================================================================
 // Finger Swipe Detection (Smooth Mobile & Touch Gestures)

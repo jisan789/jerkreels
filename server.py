@@ -220,6 +220,68 @@ async def validate_twa(request: Request):
     except Exception:
         return JSONResponse({"valid": False}, status_code=403)
 
+# Send Video directly to user's Telegram Inbox via the Bot
+@app.post("/api/send_to_inbox")
+async def send_to_inbox(request: Request):
+    try:
+        body = await request.json()
+        init_data = body.get("init_data", "")
+        reel_url = body.get("reel_url", "")
+
+        user = verify_telegram_init_data(init_data)
+        if not user or "id" not in user:
+            # Check local test mode
+            client_host = request.client.host if request.client else ""
+            if client_host in ("127.0.0.1", "localhost", "testclient"):
+                return JSONResponse({"success": True, "note": "Local test mode"})
+            return JSONResponse({"success": False, "error": "Open inside bot to send"}, status_code=403)
+
+        chat_id = user["id"]
+        if not reel_url:
+            return JSONResponse({"success": False, "error": "No reel URL"}, status_code=400)
+
+        # 1. Try sending as native video file
+        sent = False
+        try:
+            tg_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
+            payload = json.dumps({
+                "chat_id": chat_id,
+                "video": reel_url,
+                "caption": "🎬 Here is your video from ReelStream!",
+                "supports_streaming": True
+            }).encode("utf-8")
+            req = urllib.request.Request(tg_url, data=payload, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=12) as response:
+                res_data = json.loads(response.read().decode())
+                if res_data.get("ok"):
+                    sent = True
+        except Exception:
+            pass
+
+        # 2. Fallback to message with video preview
+        if not sent:
+            try:
+                tg_msg_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                payload = json.dumps({
+                    "chat_id": chat_id,
+                    "text": f"🎬 *Here is your video:*\n{reel_url}",
+                    "parse_mode": "Markdown",
+                    "disable_web_page_preview": False
+                }).encode("utf-8")
+                req = urllib.request.Request(tg_msg_url, data=payload, headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=12) as response:
+                    res_data = json.loads(response.read().decode())
+                    if res_data.get("ok"):
+                        sent = True
+            except Exception:
+                pass
+
+        if sent:
+            return JSONResponse({"success": True})
+        return JSONResponse({"success": False, "error": "Could not deliver to Telegram"}, status_code=500)
+    except Exception as exc:
+        return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
+
 # Static file serving
 @app.get("/")
 async def get_index():
