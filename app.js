@@ -525,7 +525,6 @@ function handleLiveMessage(data) {
       historyPointer = history.length - 1;
       playReel(data.reel, false);
       prepareNextPreload();
-      showToast('Reel switched live 🔀');
       break;
 
     case 'sync_play_pause':
