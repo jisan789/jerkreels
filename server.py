@@ -1,18 +1,106 @@
 import json
 import os
 import random
+import hmac
+import hashlib
+import urllib.parse
+import urllib.request
+import asyncio
 from typing import Set
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi.responses import FileResponse, JSONResponse
+from contextlib import asynccontextmanager
 import uvicorn
 
-app = FastAPI(title="ReelStream")
+BOT_TOKEN = "8922555980:AAGMNcdK5HnkERHhz_MpBVyCmI0cnwEG5BY"
+BOT_USERNAME = "jerkmatereelsBot"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Load all reels from reels.json
 with open(os.path.join(BASE_DIR, "reels.json"), "r", encoding="utf-8") as f:
     ALL_URLS = json.load(f)
+
+# Verify Telegram WebApp HMAC-SHA256 signature
+def verify_telegram_init_data(init_data: str) -> dict:
+    if not init_data:
+        return None
+    try:
+        parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
+        if "hash" not in parsed:
+            return None
+        received_hash = parsed.pop("hash")
+        data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
+        secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+        computed_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(computed_hash, received_hash):
+            user_data = json.loads(parsed.get("user", "{}"))
+            return user_data
+        return None
+    except Exception:
+        return None
+
+# Background Bot Poller for /start & menu button
+async def telegram_bot_worker():
+    app_url = os.environ.get("RENDER_EXTERNAL_URL", "https://jerkreels.onrender.com")
+
+    # Set Telegram Menu Button to open Web App
+    try:
+        menu_url = f"https://api.telegram.org/bot{BOT_TOKEN}/setChatMenuButton"
+        payload = json.dumps({
+            "menu_button": {
+                "type": "web_app",
+                "text": "🎬 Watch Reels",
+                "web_app": {"url": app_url}
+            }
+        }).encode("utf-8")
+        req = urllib.request.Request(menu_url, data=payload, headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+    offset = 0
+    while True:
+        try:
+            get_updates_url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates?offset={offset}&timeout=20"
+            req = urllib.request.Request(get_updates_url)
+            with urllib.request.urlopen(req, timeout=25) as response:
+                result = json.loads(response.read().decode())
+                for update in result.get("result", []):
+                    offset = update["update_id"] + 1
+                    msg = update.get("message", {})
+                    chat_id = msg.get("chat", {}).get("id")
+                    text = msg.get("text", "")
+
+                    if text.startswith("/start") and chat_id:
+                        send_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+                        send_payload = json.dumps({
+                            "chat_id": chat_id,
+                            "text": "🎬 **Welcome to Jerkreels!**\n\nTap the button below to launch the Web App:",
+                            "parse_mode": "Markdown",
+                            "reply_markup": {
+                                "inline_keyboard": [[
+                                    {
+                                        "text": "🚀 Open ReelStream",
+                                        "web_app": {"url": app_url}
+                                    }
+                                ]]
+                            }
+                        }).encode("utf-8")
+                        req_send = urllib.request.Request(send_url, data=send_payload, headers={"Content-Type": "application/json"})
+                        urllib.request.urlopen(req_send, timeout=5)
+        except Exception:
+            await asyncio.sleep(4)
+        await asyncio.sleep(1)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start bot worker in background
+    bot_task = asyncio.create_task(telegram_bot_worker())
+    yield
+    bot_task.cancel()
+
+app = FastAPI(title="ReelStream Telegram App", lifespan=lifespan)
 
 # Single Unified Live Watch Together Room
 class LiveRoom:
@@ -31,7 +119,6 @@ class LiveRoom:
         await websocket.accept()
         self.clients.add(websocket)
 
-        # Send initial state directly to the newly joined user
         await websocket.send_json({
             "type": "init_state",
             "current_reel": self.current_reel,
@@ -41,7 +128,6 @@ class LiveRoom:
             "online_count": len(self.clients)
         })
 
-        # Notify other existing clients that someone joined
         await self.broadcast({
             "type": "presence_update",
             "online_count": len(self.clients)
@@ -49,7 +135,6 @@ class LiveRoom:
 
     async def disconnect(self, websocket: WebSocket):
         self.clients.discard(websocket)
-        # Broadcast updated presence to remaining clients
         await self.broadcast({
             "type": "presence_update",
             "online_count": len(self.clients)
@@ -121,6 +206,19 @@ async def websocket_live_endpoint(websocket: WebSocket):
         await live_room.disconnect(websocket)
     except Exception:
         await live_room.disconnect(websocket)
+
+# Validate Telegram Web App initData
+@app.post("/api/validate_twa")
+async def validate_twa(request: Request):
+    try:
+        body = await request.json()
+        init_data = body.get("init_data", "")
+        user = verify_telegram_init_data(init_data)
+        if user is not None:
+            return JSONResponse({"valid": True, "user": user})
+        return JSONResponse({"valid": False}, status_code=403)
+    except Exception:
+        return JSONResponse({"valid": False}, status_code=403)
 
 # Static file serving
 @app.get("/")

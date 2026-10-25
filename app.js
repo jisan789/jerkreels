@@ -620,8 +620,59 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// Telegram Web App Verification (Direct browser access blocked)
+async function verifyTelegramWebApp() {
+  const tg = window.Telegram?.WebApp;
+  const initData = tg?.initData;
+
+  // Check if opened directly in a browser
+  if (!initData) {
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (isLocal) {
+      document.getElementById('telegramGate').style.display = 'none';
+      document.getElementById('playerApp').style.display = 'flex';
+      return true;
+    }
+    // Block direct access in browser
+    document.getElementById('telegramGate').style.display = 'flex';
+    document.getElementById('playerApp').style.display = 'none';
+    return false;
+  }
+
+  // Validate cryptographic HMAC signature with backend
+  try {
+    const res = await fetch('/api/validate_twa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ init_data: initData })
+    });
+    const result = await res.json();
+    if (result.valid) {
+      if (tg.ready) tg.ready();
+      if (tg.expand) tg.expand();
+      if (tg.setHeaderColor) tg.setHeaderColor('#000000');
+      if (tg.setBackgroundColor) tg.setBackgroundColor('#000000');
+      document.getElementById('telegramGate').style.display = 'none';
+      document.getElementById('playerApp').style.display = 'flex';
+      return true;
+    }
+  } catch (err) {
+    console.error('Telegram validation error:', err);
+  }
+
+  // If signature invalid or tampered
+  document.getElementById('telegramGate').style.display = 'flex';
+  document.getElementById('playerApp').style.display = 'none';
+  return false;
+}
+
 // Initialize Application
 async function init() {
+  const isAllowed = await verifyTelegramWebApp();
+  if (!isAllowed) {
+    return; // Block direct access
+  }
+
   try {
     const res = await fetch('reels.json');
     allUrls = await res.json();
