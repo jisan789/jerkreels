@@ -117,6 +117,14 @@ class LiveRoom:
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
+        if len(self.clients) == 0:
+            random_idx = random.randint(0, len(ALL_URLS) - 1)
+            self.current_reel = {
+                "id": random_idx + 1,
+                "url": ALL_URLS[random_idx]
+            }
+            self.is_paused = False
+            self.comments = []
         self.clients.add(websocket)
 
         await websocket.send_json({

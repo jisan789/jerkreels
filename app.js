@@ -112,10 +112,41 @@ function prepareNextPreload() {
   }
 }
 
-// Play Reel on Stage
+// Play Reel on Stage with Error Auto-Skip Watchdog
 let animTimeout = null;
+let videoWatchdogTimer = null;
+let isAutoSkipping = false;
+
+function cancelWatchdog() {
+  if (videoWatchdogTimer) {
+    clearTimeout(videoWatchdogTimer);
+    videoWatchdogTimer = null;
+  }
+}
+
+function handleVideoPlaybackError(reason = 'error') {
+  if (isAutoSkipping) return;
+  isAutoSkipping = true;
+  cancelWatchdog();
+  stageSpinner.style.opacity = '1';
+
+  console.warn(`Video playback issue (${reason}). Auto-skipping to next reel...`);
+  showToast('Skipping unavailable reel... ⏭️');
+
+  setTimeout(() => {
+    isAutoSkipping = false;
+    goNext();
+  }, 350);
+}
+
 function playReel(reel, notifyServer = true, direction = null) {
-  if (!reel) return;
+  if (!reel) {
+    handleVideoPlaybackError('empty_reel');
+    return;
+  }
+
+  cancelWatchdog();
+  stageSpinner.style.opacity = '1';
 
   // Simple, sleek transition animation on reel changes
   if (direction === 'next' || direction === 'prev') {
@@ -132,10 +163,22 @@ function playReel(reel, notifyServer = true, direction = null) {
   activeVideo.src = reel.url;
   activeVideo.muted = isMuted;
 
+  // 4.5s watchdog timer in case video stalls or fails to respond
+  videoWatchdogTimer = setTimeout(() => {
+    if (activeVideo.readyState < 2 && (activeVideo.paused || activeVideo.currentTime === 0)) {
+      handleVideoPlaybackError('timeout');
+    }
+  }, 4500);
+
   activeVideo.play().then(() => {
+    cancelWatchdog();
     stageSpinner.style.opacity = '0';
-  }).catch(() => {
-    stageSpinner.style.opacity = '0';
+  }).catch((err) => {
+    if (err && err.name !== 'AbortError' && err.name !== 'NotAllowedError') {
+      handleVideoPlaybackError(err.message || 'play_error');
+    } else {
+      stageSpinner.style.opacity = '0';
+    }
   });
 
   centerIndicator.classList.remove('active');
@@ -366,8 +409,21 @@ window.addEventListener('wheel', (e) => {
 
 // Video Buffering & Scrubbing
 activeVideo.addEventListener('waiting', () => { stageSpinner.style.opacity = '1'; });
-activeVideo.addEventListener('canplay', () => { stageSpinner.style.opacity = '0'; });
-activeVideo.addEventListener('playing', () => { stageSpinner.style.opacity = '0'; });
+activeVideo.addEventListener('canplay', () => {
+  cancelWatchdog();
+  stageSpinner.style.opacity = '0';
+});
+activeVideo.addEventListener('playing', () => {
+  cancelWatchdog();
+  stageSpinner.style.opacity = '0';
+});
+activeVideo.addEventListener('error', () => {
+  handleVideoPlaybackError('media_error');
+});
+
+preloadVideo.addEventListener('error', () => {
+  prepareNextPreload();
+});
 
 activeVideo.addEventListener('timeupdate', () => {
   if (activeVideo.duration) {
@@ -582,13 +638,10 @@ function escapeHtml(str) {
 }
 
 // ==========================================================================
-// Unified Single Live Room
+// Unified Single Live Room (Silent Auto-Connect for Solo Users)
 // ==========================================================================
 function connectLiveRoom() {
   isWatchTogether = true;
-  statusDot.className = 'status-dot waiting';
-  modeLabel.textContent = 'Connecting...';
-  commentsSubtitle.textContent = 'Connecting to room...';
 
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws/live`;
@@ -600,7 +653,7 @@ function connectLiveRoom() {
   socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
-    // If client is already watching a reel, share it with the room if we are sole viewer
+    // If client is sole viewer, announce current reel so room holds it
     if (historyPointer >= 0 && history[historyPointer] && onlineCount <= 1) {
       socket.send(JSON.stringify({
         type: 'change_reel',
@@ -619,8 +672,7 @@ function connectLiveRoom() {
   };
 
   socket.onclose = () => {
-    statusDot.className = 'status-dot';
-    modeLabel.textContent = 'Reconnecting...';
+    // Reconnect silently in background without bothering solo user
     setTimeout(() => {
       connectLiveRoom();
     }, 2500);
@@ -630,14 +682,23 @@ function connectLiveRoom() {
 function handleLiveMessage(data) {
   switch (data.type) {
     case 'init_state':
-      if (data.current_reel) {
-        // If we haven't played anything or if there are 2+ viewers online, sync to room reel
-        if (history.length === 0 || (data.online_count && data.online_count >= 2)) {
+      if (data.online_count && data.online_count >= 2) {
+        // Partner is already in the room: sync to room's reel immediately
+        if (data.current_reel) {
           history.push(data.current_reel);
           historyPointer = history.length - 1;
           playReel(data.current_reel, false);
         }
+      } else {
+        // Single user: keep playing our own reel and notify room
+        if (historyPointer >= 0 && history[historyPointer] && socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({
+            type: 'change_reel',
+            reel: history[historyPointer]
+          }));
+        }
       }
+
       if (data.comments) {
         liveComments = data.comments;
         renderComments();
@@ -656,9 +717,9 @@ function handleLiveMessage(data) {
       const prevCount = onlineCount;
       updatePresence(data.online_count);
       if (data.online_count >= 2 && prevCount < 2) {
-        showToast('Partner joined! Watching together 🎬');
+        showToast('Partner connected! Watching together 🎬');
       } else if (data.online_count < 2 && prevCount >= 2) {
-        showToast('Partner went offline');
+        showToast('Partner went offline — Solo mode');
       }
       break;
 
@@ -713,13 +774,13 @@ function updatePresence(count) {
   if (count >= 2) {
     btnModeToggle.classList.add('active-live');
     statusDot.className = 'status-dot connected';
-    modeLabel.textContent = `Watch Together (${count}) 🟢`;
+    modeLabel.textContent = `Watching Together (${count}) 🟢`;
     commentsSubtitle.textContent = `Live synchronized with ${count} viewers`;
   } else {
     btnModeToggle.classList.remove('active-live');
-    statusDot.className = 'status-dot waiting';
-    modeLabel.textContent = '1 Online';
-    commentsSubtitle.textContent = 'Live Room — Waiting for partner';
+    statusDot.className = 'status-dot';
+    modeLabel.textContent = 'Solo';
+    commentsSubtitle.textContent = 'Comments';
   }
 }
 
@@ -728,7 +789,7 @@ btnModeToggle.addEventListener('click', () => {
   if (onlineCount >= 2) {
     showToast(`Watching together live (${onlineCount} online) 🟢`);
   } else {
-    showToast('Auto-connected: Waiting for partner to join... ⏳');
+    showToast('Solo mode — auto-connects when partner joins');
   }
 });
 
