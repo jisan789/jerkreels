@@ -49,8 +49,16 @@ const msgPopupText = document.getElementById('msgPopupText');
 const commentsOverlay = document.getElementById('commentsOverlay');
 const btnCloseComments = document.getElementById('btnCloseComments');
 const commentsList = document.getElementById('commentsList');
-const commentsForm = document.getElementById('commentsForm');
-const commentInput = document.getElementById('commentInput');
+const customInputText = document.getElementById('customInputText');
+const customInputPlaceholder = document.getElementById('customInputPlaceholder');
+const btnInputClear = document.getElementById('btnInputClear');
+const btnSubmitComment = document.getElementById('btnSubmitComment');
+const builtInKeyboard = document.getElementById('builtInKeyboard');
+const kbBtnShift = document.getElementById('kbBtnShift');
+const kbBtnBackspace = document.getElementById('kbBtnBackspace');
+const kbBtnSpace = document.getElementById('kbBtnSpace');
+const kbBtnClear = document.getElementById('kbBtnClear');
+const kbBtnSend = document.getElementById('kbBtnSend');
 const commentsSubtitle = document.getElementById('commentsSubtitle');
 const toastPopup = document.getElementById('toastPopup');
 
@@ -104,20 +112,28 @@ function prepareNextPreload() {
 }
 
 // Play Reel on Stage
-function playReel(reel, notifyServer = true) {
+let animTimeout = null;
+function playReel(reel, notifyServer = true, direction = null) {
   if (!reel) return;
 
-  activeVideo.style.opacity = '0.35';
-  stageSpinner.style.opacity = '1';
+  // Simple, sleek transition animation on reel changes
+  if (direction === 'next' || direction === 'prev') {
+    activeVideo.classList.remove('anim-slide-next', 'anim-slide-prev');
+    void activeVideo.offsetWidth; // Force reflow
+    activeVideo.classList.add(direction === 'next' ? 'anim-slide-next' : 'anim-slide-prev');
+
+    if (animTimeout) clearTimeout(animTimeout);
+    animTimeout = setTimeout(() => {
+      activeVideo.classList.remove('anim-slide-next', 'anim-slide-prev');
+    }, 320);
+  }
 
   activeVideo.src = reel.url;
   activeVideo.muted = isMuted;
 
   activeVideo.play().then(() => {
-    activeVideo.style.opacity = '1';
     stageSpinner.style.opacity = '0';
   }).catch(() => {
-    activeVideo.style.opacity = '1';
     stageSpinner.style.opacity = '0';
   });
 
@@ -161,12 +177,12 @@ function goNext() {
   if (historyPointer < history.length - 1) {
     historyPointer++;
     const reel = history[historyPointer];
-    playReel(reel, true);
+    playReel(reel, true, 'next');
   } else {
     const reel = nextPreloadedReel || pickRandomReel();
     history.push(reel);
     historyPointer = history.length - 1;
-    playReel(reel, true);
+    playReel(reel, true, 'next');
     prepareNextPreload();
   }
 }
@@ -176,7 +192,7 @@ function goPrevious() {
   if (historyPointer > 0) {
     historyPointer--;
     const reel = history[historyPointer];
-    playReel(reel, true);
+    playReel(reel, true, 'prev');
   } else {
     showToast('First reel in session');
   }
@@ -400,9 +416,55 @@ function renderComments() {
   });
 }
 
-commentsForm.addEventListener('submit', (e) => {
-  e.preventDefault();
-  const text = commentInput.value.trim();
+let currentComment = '';
+let isShiftActive = false;
+
+function updateCommentDisplay() {
+  if (customInputText) {
+    customInputText.textContent = currentComment;
+  }
+  if (customInputPlaceholder) {
+    customInputPlaceholder.style.display = currentComment.length > 0 ? 'none' : 'inline';
+  }
+  if (btnInputClear) {
+    btnInputClear.style.display = currentComment.length > 0 ? 'flex' : 'none';
+  }
+}
+
+function appendCommentChar(char) {
+  if (currentComment.length < 240) {
+    currentComment += char;
+    updateCommentDisplay();
+  }
+}
+
+function deleteCommentChar() {
+  if (currentComment.length > 0) {
+    currentComment = currentComment.slice(0, -1);
+    updateCommentDisplay();
+  }
+}
+
+function clearCommentInput() {
+  currentComment = '';
+  updateCommentDisplay();
+}
+
+function toggleShift() {
+  isShiftActive = !isShiftActive;
+  if (kbBtnShift) {
+    kbBtnShift.classList.toggle('active', isShiftActive);
+  }
+  document.querySelectorAll('.kb-letter').forEach(btn => {
+    const ch = btn.getAttribute('data-char');
+    if (ch) {
+      btn.textContent = isShiftActive ? ch.toUpperCase() : ch.toLowerCase();
+    }
+  });
+}
+
+function submitComment() {
+  const text = currentComment.trim();
   if (!text || historyPointer < 0) return;
 
   const currentReel = history[historyPointer];
@@ -428,10 +490,46 @@ commentsForm.addEventListener('submit', (e) => {
     localStorage.setItem(STORAGE_COMMENTS, JSON.stringify(localComments));
   }
 
-  commentInput.value = '';
+  clearCommentInput();
   renderComments();
   updateSideRailUI(currentReel);
-});
+  commentsList.scrollTop = 0;
+}
+
+// Built-in Keyboard Event Handling (On-screen taps)
+if (builtInKeyboard) {
+  builtInKeyboard.addEventListener('click', (e) => {
+    const btn = e.target.closest('.kb-key');
+    if (!btn) return;
+
+    const char = btn.getAttribute('data-char');
+    if (char) {
+      const finalChar = (btn.classList.contains('kb-letter') && isShiftActive) ? char.toUpperCase() : char;
+      appendCommentChar(finalChar);
+      return;
+    }
+
+    if (btn.id === 'kbBtnShift' || btn.closest('#kbBtnShift')) {
+      toggleShift();
+    } else if (btn.id === 'kbBtnBackspace' || btn.closest('#kbBtnBackspace')) {
+      deleteCommentChar();
+    } else if (btn.id === 'kbBtnSpace' || btn.closest('#kbBtnSpace')) {
+      appendCommentChar(' ');
+    } else if (btn.id === 'kbBtnClear' || btn.closest('#kbBtnClear')) {
+      clearCommentInput();
+    } else if (btn.id === 'kbBtnSend' || btn.closest('#kbBtnSend')) {
+      submitComment();
+    }
+  });
+}
+
+if (btnSubmitComment) {
+  btnSubmitComment.addEventListener('click', submitComment);
+}
+
+if (btnInputClear) {
+  btnInputClear.addEventListener('click', clearCommentInput);
+}
 
 function escapeHtml(str) {
   const div = document.createElement('div');
@@ -523,7 +621,7 @@ function handleLiveMessage(data) {
     case 'sync_reel':
       history.push(data.reel);
       historyPointer = history.length - 1;
-      playReel(data.reel, false);
+      playReel(data.reel, false, 'next');
       prepareNextPreload();
       break;
 
@@ -586,9 +684,27 @@ btnModeToggle.addEventListener('click', () => {
   }
 });
 
-// Keyboard Navigation
+// Keyboard Navigation & Typing
 window.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT') return;
+  // If comments drawer is open, handle typing through custom input
+  if (commentsOverlay.classList.contains('open')) {
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      deleteCommentChar();
+      return;
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      submitComment();
+      return;
+    } else if (e.key === 'Escape') {
+      closeComments();
+      return;
+    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      appendCommentChar(e.key);
+      return;
+    }
+    return;
+  }
 
   const key = e.key.toLowerCase();
   if (e.key === 'ArrowDown' || key === 'j') {

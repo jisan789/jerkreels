@@ -132,15 +132,98 @@
       <div class="comments-body" id="commentsList">
         <!-- Live comments populated here -->
       </div>
-      <form class="comments-composer" id="commentsForm">
-        <input type="text" id="commentInput" placeholder="Add a comment..." autocomplete="off">
-        <button type="submit" class="comment-submit" aria-label="Send">
+      <!-- Comment Input Bar (Simulated input, no device keyboard) -->
+      <div class="comments-composer" id="commentsComposer">
+        <div class="custom-input-box" id="customInputBox">
+          <span class="custom-input-text" id="customInputText"></span>
+          <span class="custom-input-placeholder" id="customInputPlaceholder">Type a comment...</span>
+          <span class="custom-cursor"></span>
+        </div>
+        <button type="button" class="comment-clear-btn" id="btnInputClear" title="Clear input" style="display: none;">✕</button>
+        <button type="button" class="comment-submit" id="btnSubmitComment" aria-label="Send">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="22" y1="2" x2="11" y2="13"></line>
             <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
           </svg>
         </button>
-      </form>
+      </div>
+
+      <!-- Built-in Virtual Keyboard (Numeric + Alphabet Only, No Emoji, No Device Keyboard) -->
+      <div class="built-in-keyboard" id="builtInKeyboard">
+        <!-- Row 1: Numbers -->
+        <div class="kb-row kb-numbers">
+          <button type="button" class="kb-key kb-num" data-char="1">1</button>
+          <button type="button" class="kb-key kb-num" data-char="2">2</button>
+          <button type="button" class="kb-key kb-num" data-char="3">3</button>
+          <button type="button" class="kb-key kb-num" data-char="4">4</button>
+          <button type="button" class="kb-key kb-num" data-char="5">5</button>
+          <button type="button" class="kb-key kb-num" data-char="6">6</button>
+          <button type="button" class="kb-key kb-num" data-char="7">7</button>
+          <button type="button" class="kb-key kb-num" data-char="8">8</button>
+          <button type="button" class="kb-key kb-num" data-char="9">9</button>
+          <button type="button" class="kb-key kb-num" data-char="0">0</button>
+        </div>
+
+        <!-- Row 2: Letters Q-P -->
+        <div class="kb-row">
+          <button type="button" class="kb-key kb-letter" data-char="q">q</button>
+          <button type="button" class="kb-key kb-letter" data-char="w">w</button>
+          <button type="button" class="kb-key kb-letter" data-char="e">e</button>
+          <button type="button" class="kb-key kb-letter" data-char="r">r</button>
+          <button type="button" class="kb-key kb-letter" data-char="t">t</button>
+          <button type="button" class="kb-key kb-letter" data-char="y">y</button>
+          <button type="button" class="kb-key kb-letter" data-char="u">u</button>
+          <button type="button" class="kb-key kb-letter" data-char="i">i</button>
+          <button type="button" class="kb-key kb-letter" data-char="o">o</button>
+          <button type="button" class="kb-key kb-letter" data-char="p">p</button>
+        </div>
+
+        <!-- Row 3: Letters A-L -->
+        <div class="kb-row kb-row-mid">
+          <button type="button" class="kb-key kb-letter" data-char="a">a</button>
+          <button type="button" class="kb-key kb-letter" data-char="s">s</button>
+          <button type="button" class="kb-key kb-letter" data-char="d">d</button>
+          <button type="button" class="kb-key kb-letter" data-char="f">f</button>
+          <button type="button" class="kb-key kb-letter" data-char="g">g</button>
+          <button type="button" class="kb-key kb-letter" data-char="h">h</button>
+          <button type="button" class="kb-key kb-letter" data-char="j">j</button>
+          <button type="button" class="kb-key kb-letter" data-char="k">k</button>
+          <button type="button" class="kb-key kb-letter" data-char="l">l</button>
+        </div>
+
+        <!-- Row 4: Shift, Letters Z-M, Backspace -->
+        <div class="kb-row">
+          <button type="button" class="kb-key kb-action kb-shift" id="kbBtnShift" title="Caps / Shift">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path d="M12 4l-6 6h4v8h4v-8h4l-6-6z"/>
+            </svg>
+          </button>
+          <button type="button" class="kb-key kb-letter" data-char="z">z</button>
+          <button type="button" class="kb-key kb-letter" data-char="x">x</button>
+          <button type="button" class="kb-key kb-letter" data-char="c">c</button>
+          <button type="button" class="kb-key kb-letter" data-char="v">v</button>
+          <button type="button" class="kb-key kb-letter" data-char="b">b</button>
+          <button type="button" class="kb-key kb-letter" data-char="n">n</button>
+          <button type="button" class="kb-key kb-letter" data-char="m">m</button>
+          <button type="button" class="kb-key kb-action kb-backspace" id="kbBtnBackspace" title="Delete">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 4H8l-7 8 7 8h13a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"></path>
+              <line x1="18" y1="9" x2="12" y2="15"></line>
+              <line x1="12" y1="9" x2="18" y2="15"></line>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Row 5: Punctuation, Space, Clear, Send -->
+        <div class="kb-row">
+          <button type="button" class="kb-key kb-sym" data-char=".">.</button>
+          <button type="button" class="kb-key kb-sym" data-char=",">,</button>
+          <button type="button" class="kb-key kb-sym" data-char="?">?</button>
+          <button type="button" class="kb-key kb-space" id="kbBtnSpace">SPACE</button>
+          <button type="button" class="kb-key kb-action kb-clear" id="kbBtnClear">CLR</button>
+          <button type="button" class="kb-key kb-send" id="kbBtnSend">SEND</button>
+        </div>
+      </div>
     </div>
   </div>
 
