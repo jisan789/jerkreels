@@ -1,5 +1,5 @@
 // ==========================================================================
-// ReelStream - Single View & Unified Live Watch Together
+// ReelStream - Single View & Unified Live Watch Together (Finger Swipe Enabled)
 // ==========================================================================
 
 let allUrls = [];
@@ -22,6 +22,7 @@ let liveComments = [];
 let liveReelLikes = {}; // str(reel_id) -> real count
 
 // DOM Elements
+const playerStage = document.getElementById('playerStage');
 const activeVideo = document.getElementById('activeVideo');
 const preloadVideo = document.getElementById('preloadVideo');
 const stageSpinner = document.getElementById('stageSpinner');
@@ -33,8 +34,6 @@ const btnModeToggle = document.getElementById('btnModeToggle');
 const statusDot = document.getElementById('statusDot');
 const modeLabel = document.getElementById('modeLabel');
 
-const btnUp = document.getElementById('btnUp');
-const btnDown = document.getElementById('btnDown');
 const btnLove = document.getElementById('btnLove');
 const loveIcon = document.getElementById('loveIcon');
 const loveCount = document.getElementById('loveCount');
@@ -42,6 +41,10 @@ const btnComment = document.getElementById('btnComment');
 const commentsCount = document.getElementById('commentsCount');
 const scrubberBar = document.getElementById('scrubberBar');
 const scrubberFill = document.getElementById('scrubberFill');
+
+const msgPopup = document.getElementById('msgPopup');
+const msgPopupSender = document.getElementById('msgPopupSender');
+const msgPopupText = document.getElementById('msgPopupText');
 
 const commentsOverlay = document.getElementById('commentsOverlay');
 const btnCloseComments = document.getElementById('btnCloseComments');
@@ -58,6 +61,27 @@ function showToast(msg) {
   setTimeout(() => {
     toastPopup.classList.remove('show');
   }, 2200);
+}
+
+// Show Actual Incoming Message
+let msgPopupTimer = null;
+function showIncomingMessage(sender, text) {
+  if (!msgPopup) return;
+  msgPopupSender.textContent = sender || 'Partner';
+  msgPopupText.textContent = text;
+  msgPopup.classList.add('visible');
+
+  if (msgPopupTimer) clearTimeout(msgPopupTimer);
+  msgPopupTimer = setTimeout(() => {
+    msgPopup.classList.remove('visible');
+  }, 4500);
+}
+
+if (msgPopup) {
+  msgPopup.addEventListener('click', () => {
+    msgPopup.classList.remove('visible');
+    openComments();
+  });
 }
 
 // Random Reel Picker (Pure URL, Zero Fake Reacts)
@@ -100,7 +124,6 @@ function playReel(reel, notifyServer = true) {
   centerIndicator.classList.remove('active');
   updateSideRailUI(reel);
 
-  // Broadcast to live room if Watch Together is active
   if (isWatchTogether && notifyServer && socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({
       type: 'change_reel',
@@ -121,7 +144,6 @@ function updateSideRailUI(reel) {
     loveIcon.setAttribute('fill', 'none');
   }
 
-  // Real reaction counts
   let count = 0;
   if (isWatchTogether) {
     count = liveReelLikes[reel.id] || (isLovedByMe ? 1 : 0);
@@ -130,11 +152,8 @@ function updateSideRailUI(reel) {
   }
   loveCount.textContent = count;
 
-  // Real comments count
   const cCount = isWatchTogether ? liveComments.length : (localComments[reel.id] || []).length;
   commentsCount.textContent = cCount;
-
-  btnUp.style.opacity = historyPointer > 0 ? '1' : '0.4';
 }
 
 // Navigate Next (Random + Preloaded)
@@ -242,8 +261,48 @@ function syncPlayPause(isPaused) {
 
 // Button Clicks
 btnLove.addEventListener('click', () => toggleLove(false));
-btnDown.addEventListener('click', goNext);
-btnUp.addEventListener('click', goPrevious);
+
+// ==========================================================================
+// Finger Swipe Detection (Smooth Mobile & Touch Gestures)
+// ==========================================================================
+let touchStartY = 0;
+let touchStartX = 0;
+let touchStartTime = 0;
+
+playerStage.addEventListener('touchstart', (e) => {
+  touchStartY = e.touches[0].clientY;
+  touchStartX = e.touches[0].clientX;
+  touchStartTime = Date.now();
+}, { passive: true });
+
+playerStage.addEventListener('touchend', (e) => {
+  const deltaY = e.changedTouches[0].clientY - touchStartY;
+  const deltaX = e.changedTouches[0].clientX - touchStartX;
+  const timeDiff = Date.now() - touchStartTime;
+
+  // Vertical swipe threshold (min 40px and predominantly vertical)
+  if (Math.abs(deltaY) > 40 && Math.abs(deltaY) > Math.abs(deltaX) && timeDiff < 650) {
+    if (deltaY < 0) {
+      // Swipe Up -> Next Reel
+      goNext();
+    } else {
+      // Swipe Down -> Previous Reel
+      goPrevious();
+    }
+  }
+}, { passive: true });
+
+// Mouse Wheel Navigation with Throttle
+let wheelThrottle = false;
+window.addEventListener('wheel', (e) => {
+  if (wheelThrottle || commentsOverlay.classList.contains('open')) return;
+  if (Math.abs(e.deltaY) > 25) {
+    wheelThrottle = true;
+    if (e.deltaY > 0) goNext();
+    else goPrevious();
+    setTimeout(() => { wheelThrottle = false; }, 380);
+  }
+}, { passive: true });
 
 // Video Buffering & Scrubbing
 activeVideo.addEventListener('waiting', () => { stageSpinner.style.opacity = '1'; });
@@ -381,7 +440,7 @@ function escapeHtml(str) {
 }
 
 // ==========================================================================
-// Unified Single Live Room (No Separate Rooms)
+// Unified Single Live Room
 // ==========================================================================
 function connectLiveRoom() {
   isWatchTogether = true;
@@ -499,8 +558,10 @@ function handleLiveMessage(data) {
       });
       renderComments();
       updateSideRailUI(history[historyPointer]);
+      
+      // Instead of generic "new message incoming", display the ACTUAL message text!
       if (!commentsOverlay.classList.contains('open')) {
-        showToast('New comment received 💬');
+        showIncomingMessage('Partner', data.comment.text);
       }
       break;
   }
