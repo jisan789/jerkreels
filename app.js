@@ -652,6 +652,7 @@ async function verifyTelegramWebApp() {
       if (tg.expand) tg.expand();
       if (tg.setHeaderColor) tg.setHeaderColor('#000000');
       if (tg.setBackgroundColor) tg.setBackgroundColor('#000000');
+      document.title = 'Reels';
       document.getElementById('telegramGate').style.display = 'none';
       document.getElementById('playerApp').style.display = 'flex';
       return true;
