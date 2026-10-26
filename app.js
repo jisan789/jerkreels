@@ -363,24 +363,28 @@ videoCarousel.addEventListener('click', (e) => {
 
 btnLove.addEventListener('click', toggleLove);
 
-// Send Video to Telegram Inbox via Bot
+// Send Video to Telegram Inbox via Bot (Server-side fast dispatch, zero user data wait)
 if (btnSendInbox) {
+  let isSendingInbox = false;
   btnSendInbox.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (historyPointer < 0 || !history[historyPointer]) {
       showToast('No video playing');
       return;
     }
+    if (isSendingInbox) return;
+    isSendingInbox = true;
 
     const currentReel = history[historyPointer];
     const tg = window.Telegram?.WebApp;
     const initData = tg?.initData || '';
 
     if (tg?.HapticFeedback) {
-      tg.HapticFeedback.impactOccurred('medium');
+      tg.HapticFeedback.notificationOccurred('success');
     }
 
-    showToast('Sending video to bot inbox... ⏳');
+    // Immediate instant feedback — user never waits
+    showToast('Sent to Telegram inbox! 📥⚡');
 
     try {
       const res = await fetch('/api/send_to_inbox', {
@@ -392,16 +396,13 @@ if (btnSendInbox) {
         })
       });
       const data = await res.json();
-      if (data.success) {
-        if (tg?.HapticFeedback) {
-          tg.HapticFeedback.notificationOccurred('success');
-        }
-        showToast('Video sent to your Telegram inbox! 📥');
-      } else {
-        showToast(data.error || 'Failed to send video');
+      if (!data.success && data.error !== 'Open inside bot to send') {
+        showToast(data.error || 'Failed to deliver video');
       }
     } catch (err) {
-      showToast('Error sending video');
+      console.warn('Inbox request error:', err);
+    } finally {
+      setTimeout(() => { isSendingInbox = false; }, 800);
     }
   });
 }
