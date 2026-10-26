@@ -12,8 +12,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from contextlib import asynccontextmanager
 import uvicorn
 
-BOT_TOKEN = "8922555980:AAGMNcdK5HnkERHhz_MpBVyCmI0cnwEG5BY"
-BOT_USERNAME = "jerkmatereelsBot"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8829502139:AAFJoUFRwv1LDljGtqvg9qRWgRLkD_VabsY")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "jerkreelsBot")
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
