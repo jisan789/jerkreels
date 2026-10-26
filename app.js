@@ -673,8 +673,56 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Initialize Application (Pure Static Client)
+// Verify legitimate Telegram Web App context
+function checkIsTelegramWebApp() {
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (isLocal) return true;
+
+  const tg = window.Telegram?.WebApp;
+  const hash = window.location.hash || '';
+  const search = window.location.search || '';
+  const ua = navigator.userAgent || '';
+
+  // 1. Telegram WebApp URL hash and query markers injected by the Telegram client
+  const hasTgHash = hash.includes('tgWebAppData=') || hash.includes('tgWebAppVersion=');
+  const hasTgSearch = search.includes('tgWebAppData=') || search.includes('tgWebAppPlatform=') || search.includes('tgWebAppVersion=');
+
+  // 2. Telegram WebApp SDK object properties
+  const hasTgInitData = Boolean(tg?.initData && tg.initData.length > 0);
+  const hasTgUser = Boolean(tg?.initDataUnsafe && Object.keys(tg.initDataUnsafe).length > 0 && (tg.initDataUnsafe.user || tg.initDataUnsafe.query_id));
+  const hasValidPlatform = Boolean(tg?.platform && tg.platform !== 'unknown');
+  const hasTgVersion = Boolean(tg?.version && parseFloat(tg.version) > 0);
+
+  // 3. In-App User-Agent marker
+  const isTgUserAgent = /Telegram/i.test(ua);
+
+  return hasTgHash || hasTgSearch || hasTgInitData || hasTgUser || hasValidPlatform || hasTgVersion || isTgUserAgent;
+}
+
+// Initialize Application (Guarded for Telegram Web Apps only)
 async function init() {
+  let isAllowed = checkIsTelegramWebApp();
+
+  // If not immediately detected, wait 100ms in case Telegram WebApp bridge is still mounting
+  if (!isAllowed && (window.location.hash.includes('tg') || /Telegram/i.test(navigator.userAgent))) {
+    await new Promise((r) => setTimeout(r, 100));
+    isAllowed = checkIsTelegramWebApp();
+  }
+
+  const gate = document.getElementById('telegramGate');
+  const app = document.getElementById('playerApp');
+
+  if (!isAllowed) {
+    if (gate) gate.style.display = 'flex';
+    if (app) app.style.display = 'none';
+    document.title = '403 Forbidden';
+    return;
+  }
+
+  // Inside Telegram: Hide gate & display player
+  if (gate) gate.style.display = 'none';
+  if (app) app.style.display = 'flex';
+
   const tg = window.Telegram?.WebApp;
   if (tg) {
     if (tg.ready) tg.ready();
