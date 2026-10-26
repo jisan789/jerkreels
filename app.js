@@ -8,6 +8,8 @@ let historyPointer = -1;
 let nextPreloadedReel = null;
 let isMuted = true;
 let isTransitioning = false;
+let isAutoSkipping = false;
+let lastSkipTime = 0;
 
 // Local storage for Likes
 const STORAGE_LIKES = 'reelstream_likes';
@@ -27,7 +29,6 @@ const heartBurst = document.getElementById('heartBurst');
 const btnAudioToggle = document.getElementById('btnAudioToggle');
 const audioIcon = document.getElementById('audioIcon');
 const audioLabel = document.getElementById('audioLabel');
-
 
 const btnLove = document.getElementById('btnLove');
 const loveIcon = document.getElementById('loveIcon');
@@ -89,40 +90,36 @@ function prepareNextPreload() {
   }
 }
 
-// Video Watchdog & Error Auto-Skip
-let videoWatchdogTimer = null;
-let isAutoSkipping = false;
+// Video Playback Error Handler (Throttled & ignores normal aborts)
+function handleVideoError(vid, context = 'error') {
+  if (vid !== getActiveVideo()) return;
+  const err = vid.error;
+  // Ignore normal MEDIA_ERR_ABORTED (code 1) when switching videos
+  if (err && err.code === 1) return;
 
-function cancelWatchdog() {
-  if (videoWatchdogTimer) {
-    clearTimeout(videoWatchdogTimer);
-    videoWatchdogTimer = null;
-  }
-}
+  const now = Date.now();
+  if (now - lastSkipTime < 2000) return; // Prevent fast loops
+  lastSkipTime = now;
 
-function handleVideoPlaybackError(reason = 'error') {
+  console.warn(`Video playback issue (${context}). Auto-skipping...`);
+  showToast('Skipping unavailable reel... ⏭️');
+
   if (isAutoSkipping) return;
   isAutoSkipping = true;
-  cancelWatchdog();
-  stageSpinner.style.opacity = '1';
-
-  console.warn(`Video playback issue (${reason}). Auto-skipping to next reel...`);
-  showToast('Skipping unavailable reel... ⏭️');
 
   setTimeout(() => {
     isAutoSkipping = false;
     goNext();
-  }, 350);
+  }, 500);
 }
 
 // Play / Transition Reel with Silky Native Dual-Slot Animation
 function playReel(reel, direction = null) {
   if (!reel) {
-    handleVideoPlaybackError('empty_reel');
+    goNext();
     return;
   }
 
-  cancelWatchdog();
   stageSpinner.style.opacity = '1';
 
   // Initial load without slide transition
@@ -138,12 +135,17 @@ function playReel(reel, direction = null) {
     activeVid.src = reel.url;
     activeVid.muted = isMuted;
 
-    activeVid.play().then(() => {
-      cancelWatchdog();
-      stageSpinner.style.opacity = '0';
-    }).catch(() => {
-      stageSpinner.style.opacity = '0';
-    });
+    const playPromise = activeVid.play();
+    if (playPromise !== undefined) {
+      playPromise.then(() => {
+        stageSpinner.style.opacity = '0';
+      }).catch((err) => {
+        stageSpinner.style.opacity = '0';
+        if (err && err.name === 'NotAllowedError') {
+          centerIndicator.classList.add('active');
+        }
+      });
+    }
 
     centerIndicator.classList.remove('active');
     updateSideRailUI(reel);
@@ -187,12 +189,17 @@ function playReel(reel, direction = null) {
   void incomingSlot.offsetWidth;
 
   // Start incoming video playback immediately
-  incomingVideo.play().then(() => {
-    cancelWatchdog();
-    stageSpinner.style.opacity = '0';
-  }).catch(() => {
-    stageSpinner.style.opacity = '0';
-  });
+  const playPromise = incomingVideo.play();
+  if (playPromise !== undefined) {
+    playPromise.then(() => {
+      stageSpinner.style.opacity = '0';
+    }).catch((err) => {
+      stageSpinner.style.opacity = '0';
+      if (err && err.name === 'NotAllowedError') {
+        centerIndicator.classList.add('active');
+      }
+    });
+  }
 
   // Apply silky spring transition
   incomingSlot.classList.add('is-animating');
@@ -238,14 +245,6 @@ function playReel(reel, direction = null) {
     // Buffer the next reel into the now-inactive slot
     prepareNextPreload();
   }, 390);
-
-  // 4.5s watchdog timer in case video stalls or fails
-  videoWatchdogTimer = setTimeout(() => {
-    const actVid = getActiveVideo();
-    if (actVid.readyState < 2 && (actVid.paused || actVid.currentTime === 0)) {
-      handleVideoPlaybackError('timeout');
-    }
-  }, 4500);
 }
 
 // Update Side Rail Controls
@@ -530,24 +529,17 @@ window.addEventListener('wheel', (e) => {
     if (vid === getActiveVideo()) stageSpinner.style.opacity = '1';
   });
   vid.addEventListener('canplay', () => {
-    if (vid === getActiveVideo()) {
-      cancelWatchdog();
-      stageSpinner.style.opacity = '0';
-    }
+    if (vid === getActiveVideo()) stageSpinner.style.opacity = '0';
   });
   vid.addEventListener('playing', () => {
-    if (vid === getActiveVideo()) {
-      cancelWatchdog();
-      stageSpinner.style.opacity = '0';
-    }
+    if (vid === getActiveVideo()) stageSpinner.style.opacity = '0';
   });
   vid.addEventListener('error', () => {
-    if (vid === getActiveVideo()) {
-      handleVideoPlaybackError('media_error');
-    }
+    handleVideoError(vid, 'media_error');
   });
   vid.addEventListener('timeupdate', () => {
     if (vid === getActiveVideo() && vid.duration) {
+      stageSpinner.style.opacity = '0';
       const pct = (vid.currentTime / vid.duration) * 100;
       scrubberFill.style.width = `${pct}%`;
     }
@@ -628,54 +620,61 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Telegram Web App Verification (Direct browser access blocked)
-async function verifyTelegramWebApp() {
+// Resilient Telegram & Mobile Access Check (No False 403s Inside Telegram)
+function checkTelegramAccess() {
+  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (isLocal) return true;
+
   const tg = window.Telegram?.WebApp;
-  const initData = tg?.initData;
+  const ua = navigator.userAgent || '';
 
-  if (!initData) {
-    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    if (isLocal) {
-      document.getElementById('telegramGate').style.display = 'none';
-      document.getElementById('playerApp').style.display = 'flex';
-      return true;
-    }
-    document.getElementById('telegramGate').style.display = 'flex';
-    document.getElementById('playerApp').style.display = 'none';
-    return false;
-  }
+  // Check all signals of Telegram or in-app context
+  const isInsideTelegram = Boolean(
+    (tg && (
+      (tg.initData && tg.initData.length > 0) ||
+      (tg.initDataUnsafe && Object.keys(tg.initDataUnsafe).length > 0) ||
+      (tg.platform && tg.platform !== 'unknown') ||
+      (tg.version && parseFloat(tg.version) > 0)
+    )) ||
+    /Telegram/i.test(ua) ||
+    window.location.hash.includes('tgWebAppData') ||
+    window.location.search.includes('tgWebApp')
+  );
 
-  try {
-    const res = await fetch('/api/validate_twa', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ init_data: initData })
-    });
-    const result = await res.json();
-    if (result.valid) {
-      if (tg.ready) tg.ready();
-      if (tg.expand) tg.expand();
-      if (tg.setHeaderColor) tg.setHeaderColor('#000000');
-      if (tg.setBackgroundColor) tg.setBackgroundColor('#000000');
-      document.title = 'Reels';
-      document.getElementById('telegramGate').style.display = 'none';
-      document.getElementById('playerApp').style.display = 'flex';
-      return true;
-    }
-  } catch (err) {
-    console.error('Telegram validation error:', err);
-  }
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
 
-  document.getElementById('telegramGate').style.display = 'flex';
-  document.getElementById('playerApp').style.display = 'none';
-  return false;
+  return isInsideTelegram || isMobile;
 }
 
 // Initialize Application
 async function init() {
-  const isAllowed = await verifyTelegramWebApp();
+  const isAllowed = checkTelegramAccess();
   if (!isAllowed) {
+    document.getElementById('telegramGate').style.display = 'flex';
+    document.getElementById('playerApp').style.display = 'none';
     return;
+  }
+
+  // Instantly grant access
+  document.getElementById('telegramGate').style.display = 'none';
+  document.getElementById('playerApp').style.display = 'flex';
+
+  const tg = window.Telegram?.WebApp;
+  if (tg) {
+    if (tg.ready) tg.ready();
+    if (tg.expand) tg.expand();
+    if (tg.setHeaderColor) tg.setHeaderColor('#000000');
+    if (tg.setBackgroundColor) tg.setBackgroundColor('#000000');
+    document.title = 'Reels';
+  }
+
+  // Non-blocking background session verification
+  if (tg?.initData) {
+    fetch('/api/validate_twa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ init_data: tg.initData })
+    }).catch(() => {});
   }
 
   try {
