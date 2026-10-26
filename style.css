@@ -268,10 +268,106 @@ html, body {
   pointer-events: auto;
 }
 
-/* Mode Toggle Button (Single View <--> Watch Together) */
-.header-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  transform: scale(1.06);
+/* Audio Mute / Unmute Toggle Button (Luxury Frosted Pill) */
+.audio-toggle-btn {
+  height: 34px;
+  padding: 0 11px 0 9px;
+  border-radius: 9999px;
+  background: rgba(18, 20, 26, 0.72);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+              background 0.2s ease,
+              border-color 0.2s ease,
+              box-shadow 0.2s ease,
+              color 0.2s ease;
+  font-family: inherit;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.audio-toggle-btn:hover {
+  transform: scale(1.05);
+  background: rgba(28, 32, 42, 0.85);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.audio-toggle-btn:active {
+  transform: scale(0.93);
+}
+
+.audio-toggle-btn.is-muted {
+  background: rgba(20, 22, 28, 0.75);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.audio-toggle-btn.is-unmuted {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(16, 185, 129, 0.55);
+  color: #a7f3d0;
+  box-shadow: 0 0 16px rgba(16, 185, 129, 0.28);
+}
+
+.audio-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.audio-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* Sound Wave Bars Animation */
+.sound-wave-bars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+
+.sound-wave-bars .bar {
+  width: 2px;
+  height: 100%;
+  background: currentColor;
+  border-radius: 1px;
+  opacity: 0.3;
+  transform: scaleY(0.3);
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.audio-toggle-btn.is-unmuted .sound-wave-bars .bar {
+  opacity: 1;
+  animation: soundWave 0.9s ease-in-out infinite alternate;
+}
+
+.audio-toggle-btn.is-unmuted .sound-wave-bars .bar:nth-child(1) {
+  animation-delay: 0s;
+  height: 60%;
+}
+.audio-toggle-btn.is-unmuted .sound-wave-bars .bar:nth-child(2) {
+  animation-delay: 0.25s;
+  height: 100%;
+}
+.audio-toggle-btn.is-unmuted .sound-wave-bars .bar:nth-child(3) {
+  animation-delay: 0.45s;
+  height: 75%;
+}
+
+@keyframes soundWave {
+  0% { transform: scaleY(0.35); }
+  100% { transform: scaleY(1); }
 }
 
 /* ==========================================================================

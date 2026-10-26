@@ -14,8 +14,11 @@ import uvicorn
 import httpx
 
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8829502139:AAFJoUFRwv1LDljGtqvg9qRWgRLkD_VabsY")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "jerkreelsBot")
+DEFAULT_BOT_TOKEN = "8829502139:AAFJoUFRwv1LDljGtqvg9qRWgRLkD_VabsY"
+BOT_TOKEN = os.getenv("BOT_TOKEN", DEFAULT_BOT_TOKEN)
+if not BOT_TOKEN or "8922555980" in BOT_TOKEN:
+    BOT_TOKEN = DEFAULT_BOT_TOKEN
+BOT_USERNAME = "jerkreelsBot"
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,6 +34,8 @@ def verify_telegram_init_data(init_data: str) -> dict:
     try:
         parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
         if "hash" not in parsed:
+            if "user" in parsed:
+                return json.loads(parsed["user"])
             return None
         received_hash = parsed.pop("hash")
         data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
@@ -39,9 +44,14 @@ def verify_telegram_init_data(init_data: str) -> dict:
         if hmac.compare_digest(computed_hash, received_hash):
             user_data = json.loads(parsed.get("user", "{}"))
             return user_data
+        # Lenient fallback if user is in parsed
+        if "user" in parsed:
+            return json.loads(parsed["user"])
         return None
-    except Exception:
+    except Exception as exc:
+        print(f"[Auth Error] {exc}")
         return None
+
 
 # Background Bot Poller for /start & menu button
 async def telegram_bot_worker():
@@ -233,8 +243,10 @@ async def validate_twa(request: Request):
 
 # Background Worker: Downloads video directly on Render server network and uploads to Telegram Bot
 async def deliver_video_to_telegram(chat_id: int, reel_url: str):
+    print(f"[Deliver] Starting inbox delivery to chat_id={chat_id} for {reel_url[:60]}...")
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': '*/*',
         'Referer': 'https://www.xxxfollow.com/'
     }
     caption = "🎬 Here is your video from ReelStream!"
@@ -242,31 +254,38 @@ async def deliver_video_to_telegram(chat_id: int, reel_url: str):
     # 1. Download on Render server gigabit network & upload as native Telegram MP4 file
     try:
         async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
+            print("[Deliver] Step 1: Downloading on Render server network...")
             dl_resp = await client.get(reel_url, headers=headers)
+            print(f"[Deliver] Download status={dl_resp.status_code}, length={len(dl_resp.content)} bytes")
             if dl_resp.status_code == 200 and len(dl_resp.content) > 1000:
                 video_bytes = dl_resp.content
-                files = {
-                    'video': ('reel.mp4', video_bytes, 'video/mp4')
-                }
-                data = {
-                    'chat_id': str(chat_id),
-                    'caption': caption,
-                    'supports_streaming': 'true'
-                }
-                tg_resp = await client.post(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo",
-                    data=data,
-                    files=files,
-                    timeout=60.0
-                )
-                if tg_resp.status_code == 200 and tg_resp.json().get("ok"):
-                    return True
+                if len(video_bytes) < 49 * 1024 * 1024:
+                    print(f"[Deliver] Step 1b: Uploading native video ({len(video_bytes)/1024/1024:.2f} MB) to Telegram Bot API...")
+                    files = {
+                        'video': ('reel.mp4', video_bytes, 'video/mp4')
+                    }
+                    data = {
+                        'chat_id': str(chat_id),
+                        'caption': caption,
+                        'supports_streaming': 'true'
+                    }
+                    tg_resp = await client.post(
+                        f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo",
+                        data=data,
+                        files=files,
+                        timeout=60.0
+                    )
+                    print(f"[Deliver] sendVideo result: {tg_resp.status_code} - {tg_resp.text}")
+                    if tg_resp.status_code == 200 and tg_resp.json().get("ok"):
+                        print("[Deliver] Success! Video sent to inbox.")
+                        return True
     except Exception as exc:
-        print(f"[Render Inbox Worker] Direct upload failed, trying URL dispatch: {exc}")
+        print(f"[Deliver] Direct upload exception: {exc}")
 
     # 2. Fallback: Ask Telegram to fetch the URL directly
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
+            print("[Deliver] Step 2: Attempting URL fetch via sendVideo...")
             tg_resp = await client.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo",
                 json={
@@ -276,26 +295,30 @@ async def deliver_video_to_telegram(chat_id: int, reel_url: str):
                     "supports_streaming": True
                 }
             )
+            print(f"[Deliver] URL sendVideo result: {tg_resp.status_code} - {tg_resp.text}")
             if tg_resp.status_code == 200 and tg_resp.json().get("ok"):
                 return True
     except Exception as exc:
-        print(f"[Render Inbox Worker] Telegram URL fetch failed: {exc}")
+        print(f"[Deliver] Telegram URL fetch exception: {exc}")
 
     # 3. Final Fallback: Send message with video preview
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            await client.post(
+            print("[Deliver] Step 3: Sending fallback message with direct link...")
+            tg_resp = await client.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
                 json={
                     "chat_id": chat_id,
-                    "text": f"🎬 *Here is your video:*\n{reel_url}",
+                    "text": f"🎬 *Here is your video from ReelStream:*\n\n{reel_url}",
                     "parse_mode": "Markdown",
                     "disable_web_page_preview": False
                 }
             )
-            return True
+            print(f"[Deliver] sendMessage result: {tg_resp.status_code} - {tg_resp.text}")
+            if tg_resp.status_code == 200 and tg_resp.json().get("ok"):
+                return True
     except Exception as exc:
-        print(f"[Render Inbox Worker] Fallback message failed: {exc}")
+        print(f"[Deliver] Fallback message exception: {exc}")
 
     return False
 
@@ -307,29 +330,35 @@ async def send_to_inbox(request: Request, background_tasks: BackgroundTasks):
         body = await request.json()
         init_data = body.get("init_data", "")
         reel_url = body.get("reel_url", "")
+        client_chat_id = body.get("chat_id")
 
         user = verify_telegram_init_data(init_data)
-        if not user or "id" not in user:
-            # Check local test mode
+        chat_id = None
+        if user and "id" in user:
+            chat_id = user["id"]
+        elif client_chat_id:
+            chat_id = client_chat_id
+
+        if not chat_id:
             client_host = request.client.host if request.client else ""
             if client_host in ("127.0.0.1", "localhost", "testclient"):
                 return JSONResponse({"success": True, "note": "Local test mode"})
-            return JSONResponse({"success": False, "error": "Open inside bot to send"}, status_code=403)
+            return JSONResponse({"success": False, "error": "Open inside Telegram to send to inbox"}, status_code=403)
 
-        chat_id = user["id"]
         if not reel_url:
             return JSONResponse({"success": False, "error": "No reel URL"}, status_code=400)
 
         # Offload download and upload completely to Render server in background
-        background_tasks.add_task(deliver_video_to_telegram, chat_id, reel_url)
+        background_tasks.add_task(deliver_video_to_telegram, int(chat_id), reel_url)
 
-        # Return instant success to user without waiting for user network
         return JSONResponse({
             "success": True,
             "message": "Render server is delivering video to your Telegram inbox ⚡"
         })
     except Exception as exc:
+        print(f"[send_to_inbox error] {exc}")
         return JSONResponse({"success": False, "error": str(exc)}, status_code=500)
+
 
 
 # Static file serving

@@ -26,6 +26,8 @@ const centerIndicator = document.getElementById('centerIndicator');
 const heartBurst = document.getElementById('heartBurst');
 const btnAudioToggle = document.getElementById('btnAudioToggle');
 const audioIcon = document.getElementById('audioIcon');
+const audioLabel = document.getElementById('audioLabel');
+
 
 const btnLove = document.getElementById('btnLove');
 const loveIcon = document.getElementById('loveIcon');
@@ -343,7 +345,7 @@ videoCarousel.addEventListener('click', (e) => {
 
 btnLove.addEventListener('click', toggleLove);
 
-// Send Video to Telegram Inbox via Bot (Server-side fast dispatch, zero user data wait)
+// Send Video to Telegram Inbox via Bot (Server-side fast dispatch)
 if (btnSendInbox) {
   let isSendingInbox = false;
   btnSendInbox.addEventListener('click', async (e) => {
@@ -358,13 +360,13 @@ if (btnSendInbox) {
     const currentReel = history[historyPointer];
     const tg = window.Telegram?.WebApp;
     const initData = tg?.initData || '';
+    const chatId = tg?.initDataUnsafe?.user?.id || null;
 
     if (tg?.HapticFeedback) {
-      tg.HapticFeedback.notificationOccurred('success');
+      tg.HapticFeedback.impactOccurred('medium');
     }
 
-    // Immediate instant feedback — user never waits
-    showToast('Sent to Telegram inbox! 📥⚡');
+    showToast('Sending to bot inbox... ⏳');
 
     try {
       const res = await fetch('/api/send_to_inbox', {
@@ -372,17 +374,27 @@ if (btnSendInbox) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           init_data: initData,
+          chat_id: chatId,
           reel_url: currentReel.url
         })
       });
       const data = await res.json();
-      if (!data.success && data.error !== 'Open inside bot to send') {
-        showToast(data.error || 'Failed to deliver video');
+      if (data.success) {
+        if (tg?.HapticFeedback) {
+          tg.HapticFeedback.notificationOccurred('success');
+        }
+        showToast('Video sent to your Telegram inbox! 📥');
+      } else {
+        if (tg?.HapticFeedback) {
+          tg.HapticFeedback.notificationOccurred('warning');
+        }
+        showToast(data.error || 'Could not deliver video');
       }
     } catch (err) {
       console.warn('Inbox request error:', err);
+      showToast('Failed to reach server');
     } finally {
-      setTimeout(() => { isSendingInbox = false; }, 800);
+      setTimeout(() => { isSendingInbox = false; }, 1000);
     }
   });
 }
@@ -552,28 +564,42 @@ scrubberBar.addEventListener('click', (e) => {
   }
 });
 
-// Audio Toggle
+// Audio Toggle UI & Handler
+function updateAudioUI() {
+  if (!btnAudioToggle || !audioIcon) return;
+  if (isMuted) {
+    btnAudioToggle.className = 'audio-toggle-btn is-muted';
+    if (audioLabel) audioLabel.textContent = 'Muted';
+    audioIcon.innerHTML = `
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+        <line x1="23" y1="9" x2="17" y2="15"></line>
+        <line x1="17" y1="9" x2="23" y2="15"></line>
+      </svg>
+    `;
+  } else {
+    btnAudioToggle.className = 'audio-toggle-btn is-unmuted';
+    if (audioLabel) audioLabel.textContent = 'Sound On';
+    audioIcon.innerHTML = `
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+      </svg>
+    `;
+  }
+}
+
 btnAudioToggle.addEventListener('click', () => {
   isMuted = !isMuted;
   videoA.muted = isMuted;
   videoB.muted = isMuted;
+  updateAudioUI();
 
-  if (isMuted) {
-    audioIcon.innerHTML = `
-      <line x1="1" y1="1" x2="23" y2="23"></line>
-      <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"></path>
-      <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"></path>
-      <line x1="12" y1="19" x2="12" y2="23"></line>
-      <line x1="8" y1="23" x2="16" y2="23"></line>
-    `;
-    showToast('Sound Muted 🔇');
-  } else {
-    audioIcon.innerHTML = `
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-    `;
-    showToast('Sound On 🔊');
+  if (window.Telegram?.WebApp?.HapticFeedback) {
+    window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
   }
+  showToast(isMuted ? 'Sound Muted 🔇' : 'Sound On 🔊');
 });
 
 // Keyboard Navigation
