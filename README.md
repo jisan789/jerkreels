@@ -45,4 +45,3 @@ Open in your browser:
 | Double Tap on Screen | Love React (Heart burst) |
 | <kbd>L</kbd> | Love React Toggle |
 | <kbd>M</kbd> | Audio Mute / Unmute |
-| <kbd>C</kbd> | Open Comments Drawer |

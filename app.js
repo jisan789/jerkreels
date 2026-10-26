@@ -9,11 +9,9 @@ let nextPreloadedReel = null;
 let isMuted = true;
 let isTransitioning = false;
 
-// Local storage for Likes and Comments
+// Local storage for Likes
 const STORAGE_LIKES = 'reelstream_likes';
-const STORAGE_COMMENTS = 'reelstream_comments';
 const myLikedIds = new Set(JSON.parse(localStorage.getItem(STORAGE_LIKES) || '[]'));
-const localComments = JSON.parse(localStorage.getItem(STORAGE_COMMENTS) || '{}');
 
 // DOM Elements
 const playerStage = document.getElementById('playerStage');
@@ -32,25 +30,9 @@ const audioIcon = document.getElementById('audioIcon');
 const btnLove = document.getElementById('btnLove');
 const loveIcon = document.getElementById('loveIcon');
 const loveCount = document.getElementById('loveCount');
-const btnComment = document.getElementById('btnComment');
-const commentsCount = document.getElementById('commentsCount');
 const btnSendInbox = document.getElementById('btnSendInbox');
 const scrubberBar = document.getElementById('scrubberBar');
 const scrubberFill = document.getElementById('scrubberFill');
-
-const commentsOverlay = document.getElementById('commentsOverlay');
-const btnCloseComments = document.getElementById('btnCloseComments');
-const commentsList = document.getElementById('commentsList');
-const customInputText = document.getElementById('customInputText');
-const customInputPlaceholder = document.getElementById('customInputPlaceholder');
-const btnInputClear = document.getElementById('btnInputClear');
-const btnSubmitComment = document.getElementById('btnSubmitComment');
-const builtInKeyboard = document.getElementById('builtInKeyboard');
-const kbBtnShift = document.getElementById('kbBtnShift');
-const kbBtnBackspace = document.getElementById('kbBtnBackspace');
-const kbBtnSpace = document.getElementById('kbBtnSpace');
-const kbBtnClear = document.getElementById('kbBtnClear');
-const kbBtnSend = document.getElementById('kbBtnSend');
 const toastPopup = document.getElementById('toastPopup');
 
 // Dual-Slot State: 0 -> slotA is active, 1 -> slotB is active
@@ -278,8 +260,6 @@ function updateSideRailUI(reel) {
   }
 
   loveCount.textContent = isLovedByMe ? 1 : 0;
-  const cCount = (localComments[reel.id] || []).length;
-  commentsCount.textContent = cCount;
 }
 
 // Navigate Next (Random + Preloaded)
@@ -416,7 +396,7 @@ let touchStartTime = 0;
 let isDraggingTouch = false;
 
 playerStage.addEventListener('touchstart', (e) => {
-  if (isTransitioning || commentsOverlay.classList.contains('open')) return;
+  if (isTransitioning) return;
   touchStartY = e.touches[0].clientY;
   touchStartX = e.touches[0].clientX;
   touchStartTime = Date.now();
@@ -424,7 +404,7 @@ playerStage.addEventListener('touchstart', (e) => {
 }, { passive: true });
 
 playerStage.addEventListener('touchmove', (e) => {
-  if (isTransitioning || commentsOverlay.classList.contains('open')) return;
+  if (isTransitioning) return;
   const currentY = e.touches[0].clientY;
   const currentX = e.touches[0].clientX;
   const deltaY = currentY - touchStartY;
@@ -482,7 +462,7 @@ playerStage.addEventListener('touchmove', (e) => {
 }, { passive: false });
 
 playerStage.addEventListener('touchend', (e) => {
-  if (isTransitioning || commentsOverlay.classList.contains('open')) return;
+  if (isTransitioning) return;
   const deltaY = e.changedTouches[0].clientY - touchStartY;
   const timeDiff = Date.now() - touchStartTime;
   const isFlick = timeDiff < 300 && Math.abs(deltaY) > 40;
@@ -523,7 +503,7 @@ playerStage.addEventListener('touchend', (e) => {
 // Mouse Wheel Navigation with Throttle
 let wheelThrottle = false;
 window.addEventListener('wheel', (e) => {
-  if (wheelThrottle || isTransitioning || commentsOverlay.classList.contains('open')) return;
+  if (wheelThrottle || isTransitioning) return;
   if (Math.abs(e.deltaY) > 25) {
     wheelThrottle = true;
     if (e.deltaY > 0) goNext();
@@ -596,177 +576,8 @@ btnAudioToggle.addEventListener('click', () => {
   }
 });
 
-// Comments Drawer
-function openComments() {
-  commentsOverlay.classList.add('open');
-  renderComments();
-}
-
-function closeComments() {
-  commentsOverlay.classList.remove('open');
-}
-
-btnComment.addEventListener('click', openComments);
-btnCloseComments.addEventListener('click', closeComments);
-commentsOverlay.addEventListener('click', (e) => {
-  if (e.target === commentsOverlay) closeComments();
-});
-
-function renderComments() {
-  commentsList.innerHTML = '';
-  const currentReel = history[historyPointer];
-  if (!currentReel) return;
-
-  const comments = localComments[currentReel.id] || [];
-
-  if (comments.length === 0) {
-    commentsList.innerHTML = `
-      <div class="empty-comments">
-        No comments yet.<br>Be the first to write a comment!
-      </div>`;
-    return;
-  }
-
-  comments.forEach(c => {
-    const bubble = document.createElement('div');
-    bubble.className = 'comment-bubble';
-    bubble.innerHTML = `
-      <div class="comment-author-tag">${escapeHtml(c.sender || 'You')}</div>
-      <div class="comment-content">${escapeHtml(c.text)}</div>
-      <div class="comment-stamp">${c.time}</div>
-    `;
-    commentsList.appendChild(bubble);
-  });
-}
-
-let currentComment = '';
-let isShiftActive = false;
-
-function updateCommentDisplay() {
-  if (customInputText) {
-    customInputText.textContent = currentComment;
-  }
-  if (customInputPlaceholder) {
-    customInputPlaceholder.style.display = currentComment.length > 0 ? 'none' : 'inline';
-  }
-  if (btnInputClear) {
-    btnInputClear.style.display = currentComment.length > 0 ? 'flex' : 'none';
-  }
-}
-
-function appendCommentChar(char) {
-  if (currentComment.length < 240) {
-    currentComment += char;
-    updateCommentDisplay();
-  }
-}
-
-function deleteCommentChar() {
-  if (currentComment.length > 0) {
-    currentComment = currentComment.slice(0, -1);
-    updateCommentDisplay();
-  }
-}
-
-function clearCommentInput() {
-  currentComment = '';
-  updateCommentDisplay();
-}
-
-function toggleShift() {
-  isShiftActive = !isShiftActive;
-  if (kbBtnShift) {
-    kbBtnShift.classList.toggle('active', isShiftActive);
-  }
-  document.querySelectorAll('.kb-letter').forEach(btn => {
-    const ch = btn.getAttribute('data-char');
-    if (ch) {
-      btn.textContent = isShiftActive ? ch.toUpperCase() : ch.toLowerCase();
-    }
-  });
-}
-
-function submitComment() {
-  const text = currentComment.trim();
-  if (!text || historyPointer < 0) return;
-
-  const currentReel = history[historyPointer];
-  const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-  const commentObj = {
-    sender: 'You',
-    text: text,
-    time: timeStr
-  };
-
-  if (!localComments[currentReel.id]) localComments[currentReel.id] = [];
-  localComments[currentReel.id].unshift(commentObj);
-  localStorage.setItem(STORAGE_COMMENTS, JSON.stringify(localComments));
-
-  clearCommentInput();
-  renderComments();
-  updateSideRailUI(currentReel);
-  commentsList.scrollTop = 0;
-}
-
-// Built-in Keyboard Event Handling
-if (builtInKeyboard) {
-  builtInKeyboard.addEventListener('click', (e) => {
-    const btn = e.target.closest('.kb-key');
-    if (!btn) return;
-
-    const char = btn.getAttribute('data-char');
-    if (char) {
-      const finalChar = (btn.classList.contains('kb-letter') && isShiftActive) ? char.toUpperCase() : char;
-      appendCommentChar(finalChar);
-      return;
-    }
-
-    if (btn.id === 'kbBtnShift' || btn.closest('#kbBtnShift')) {
-      toggleShift();
-    } else if (btn.id === 'kbBtnBackspace' || btn.closest('#kbBtnBackspace')) {
-      deleteCommentChar();
-    } else if (btn.id === 'kbBtnSpace' || btn.closest('#kbBtnSpace')) {
-      appendCommentChar(' ');
-    } else if (btn.id === 'kbBtnClear' || btn.closest('#kbBtnClear')) {
-      clearCommentInput();
-    } else if (btn.id === 'kbBtnSend' || btn.closest('#kbBtnSend')) {
-      submitComment();
-    }
-  });
-}
-
-if (btnSubmitComment) {
-  btnSubmitComment.addEventListener('click', submitComment);
-}
-
-if (btnInputClear) {
-  btnInputClear.addEventListener('click', clearCommentInput);
-}
-
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
-
 // Keyboard Navigation
 window.addEventListener('keydown', (e) => {
-  if (commentsOverlay.classList.contains('open')) {
-    if (e.key === 'Backspace') {
-      e.preventDefault();
-      deleteCommentChar();
-    } else if (e.key === 'Enter') {
-      e.preventDefault();
-      submitComment();
-    } else if (e.key === 'Escape') {
-      closeComments();
-    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      appendCommentChar(e.key);
-    }
-    return;
-  }
-
   const key = e.key.toLowerCase();
   if (e.key === 'ArrowDown' || key === 'j') {
     e.preventDefault();
@@ -788,11 +599,6 @@ window.addEventListener('keydown', (e) => {
     btnAudioToggle.click();
   } else if (key === 'l') {
     toggleLove();
-  } else if (key === 'c') {
-    if (commentsOverlay.classList.contains('open')) closeComments();
-    else openComments();
-  } else if (e.key === 'Escape') {
-    closeComments();
   }
 });
 
