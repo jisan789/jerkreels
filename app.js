@@ -344,31 +344,70 @@ videoCarousel.addEventListener('click', (e) => {
 
 btnLove.addEventListener('click', toggleLove);
 
-// Share Reel (Native Telegram share, Web Share API, or Clipboard copy)
+// Telegram Bot Token for direct client-side inbox dispatch (CORS supported by Telegram API)
+const BOT_TOKEN = '8829502139:AAFJoUFRwv1LDljGtqvg9qRWgRLkD_VabsY';
+
+// Send Video to Telegram Inbox directly via Bot API (Zero server required)
 if (btnSendInbox) {
+  let isSendingInbox = false;
   btnSendInbox.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (historyPointer < 0 || !history[historyPointer]) {
       showToast('No video playing');
       return;
     }
+    if (isSendingInbox) return;
+    isSendingInbox = true;
 
     const currentReel = history[historyPointer];
     const tg = window.Telegram?.WebApp;
+    const chatId = tg?.initDataUnsafe?.user?.id || null;
 
     if (tg?.HapticFeedback) {
       tg.HapticFeedback.impactOccurred('medium');
     }
 
-    // 1. If inside Telegram WebApp, trigger Telegram native share sheet
-    if (tg && typeof tg.openTelegramLink === 'function') {
-      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(currentReel.url)}&text=${encodeURIComponent('🎬 Check out this reel!')}`;
-      tg.openTelegramLink(shareUrl);
-      showToast('Opening Telegram share... ✈️');
+    // 1. If inside Telegram WebApp with active user ID, call Telegram Bot API directly
+    if (chatId) {
+      showToast('Sending to bot inbox... ⏳');
+      try {
+        const resp = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: `🎬 <b>New Reel</b>\n\n<a href="${currentReel.url}">▶ Watch Video</a>\n\n<code>${currentReel.url}</code>`,
+            parse_mode: 'HTML'
+          })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+          showToast('Video sent to your Telegram inbox! 📥');
+        } else {
+          // If bot cannot message user (user hasn't pressed /start), open share sheet
+          if (typeof tg.openTelegramLink === 'function') {
+            const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(currentReel.url)}&text=${encodeURIComponent('🎬 Check out this reel!')}`;
+            tg.openTelegramLink(shareUrl);
+          }
+          showToast('Please start @jerkreelsBot in Telegram 🤖');
+        }
+      } catch (err) {
+        console.warn('Direct bot call error:', err);
+        // Fallback to native share link
+        if (typeof tg.openTelegramLink === 'function') {
+          const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(currentReel.url)}&text=${encodeURIComponent('🎬 Check out this reel!')}`;
+          tg.openTelegramLink(shareUrl);
+        } else {
+          showToast('Failed to reach Telegram');
+        }
+      } finally {
+        setTimeout(() => { isSendingInbox = false; }, 1000);
+      }
       return;
     }
 
-    // 2. If modern Web Share API is available (Mobile/Desktop)
+    // 2. If modern Web Share API is available (Mobile Browser)
     if (navigator.share) {
       try {
         await navigator.share({
@@ -377,31 +416,39 @@ if (btnSendInbox) {
           url: currentReel.url
         });
         showToast('Shared successfully! ✨');
-        return;
       } catch (err) {
-        if (err.name === 'AbortError') return;
+        if (err.name !== 'AbortError') {
+          copyToClipboard(currentReel.url);
+        }
+      } finally {
+        isSendingInbox = false;
       }
+      return;
     }
 
     // 3. Fallback: Copy direct URL to clipboard
-    try {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(currentReel.url);
-        showToast('Video link copied to clipboard! 📋');
-      } else {
-        const tempInput = document.createElement('input');
-        tempInput.value = currentReel.url;
-        document.body.appendChild(tempInput);
-        tempInput.select();
-        document.execCommand('copy');
-        document.body.removeChild(tempInput);
-        showToast('Video link copied to clipboard! 📋');
-      }
-    } catch (err) {
-      console.warn('Clipboard write failed:', err);
-      showToast('Could not copy link');
-    }
+    copyToClipboard(currentReel.url);
+    isSendingInbox = false;
   });
+}
+
+function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text);
+      showToast('Video link copied to clipboard! 📋');
+    } else {
+      const tempInput = document.createElement('input');
+      tempInput.value = text;
+      document.body.appendChild(tempInput);
+      tempInput.select();
+      document.execCommand('copy');
+      document.body.removeChild(tempInput);
+      showToast('Video link copied to clipboard! 📋');
+    }
+  } catch (err) {
+    showToast('Could not copy link');
+  }
 }
 
 // ==========================================================================
