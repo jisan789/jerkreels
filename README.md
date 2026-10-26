@@ -2,6 +2,8 @@
 
 A sleek, responsive, zero-flicker vertical video player for streaming random reels with native dual-slot transitions and finger-drag physics.
 
+**100% Pure Static Web Application** — No Python, no backend server, and no Render process needed. Host anywhere with zero configuration!
+
 ---
 
 ## ✨ Features
@@ -14,24 +16,40 @@ A sleek, responsive, zero-flicker vertical video player for streaming random ree
   - Drag up or down on touch devices with real-time responsive tracking.
   - Momentum flick detection and rubber-band springback.
 - **Micro-Interactions & Haptic Feedback**:
-  - Native Telegram Web App haptic feedback on reel changes and double-tap love reactions.
+  - Optional Telegram Web App haptic feedback when opened within Telegram.
   - Double-tap animated heart pop burst.
-- **Direct Telegram Bot Inbox**:
-  - One-tap "Inbox" button to send the current video directly to your Telegram bot chat.
-- **Clean Architecture**:
-  - Python backend (`FastAPI` + `Uvicorn`) with Telegram WebApp HMAC verification.
-  - Vanilla JS + CSS3 hardware-accelerated animations.
+- **Native Share & Clipboard**:
+  - One-tap "Share" button supporting Telegram share sheets, the Web Share API, and clipboard copy.
+- **100% Pure Static Architecture**:
+  - Pure HTML5, CSS3, ES Modules JavaScript, and JSON catalog.
+  - Zero server or backend dependencies.
 
 ---
 
-## 🚀 How to Run
+## 🚀 Static Hosting Options
 
+You can host this project directly on any static web host or CDN:
+
+### 1. GitHub Pages
+1. Go to repository **Settings** > **Pages**.
+2. Select branch `main` and root folder `/`.
+3. Click **Save** — live instantly!
+
+### 2. Cloudflare Pages / Vercel / Netlify
+1. Connect your repository.
+2. Build command: *(leave empty)*
+3. Publish directory: *(leave root `/` or `.`)
+4. Deploy!
+
+### 3. Local Preview
+Run any local static file server:
 ```bash
-python server.py
-```
+# Using python built-in http server (optional, for local viewing only):
+python -m http.server 3000
 
-Open in your browser:
-👉 **[http://localhost:3000](http://localhost:3000)**
+# Or using npx serve:
+npx serve .
+```
 
 ---
 

@@ -344,56 +344,62 @@ videoCarousel.addEventListener('click', (e) => {
 
 btnLove.addEventListener('click', toggleLove);
 
-// Send Video to Telegram Inbox via Bot (Server-side fast dispatch)
+// Share Reel (Native Telegram share, Web Share API, or Clipboard copy)
 if (btnSendInbox) {
-  let isSendingInbox = false;
   btnSendInbox.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (historyPointer < 0 || !history[historyPointer]) {
       showToast('No video playing');
       return;
     }
-    if (isSendingInbox) return;
-    isSendingInbox = true;
 
     const currentReel = history[historyPointer];
     const tg = window.Telegram?.WebApp;
-    const initData = tg?.initData || '';
-    const chatId = tg?.initDataUnsafe?.user?.id || null;
 
     if (tg?.HapticFeedback) {
       tg.HapticFeedback.impactOccurred('medium');
     }
 
-    showToast('Sending to bot inbox... ⏳');
+    // 1. If inside Telegram WebApp, trigger Telegram native share sheet
+    if (tg && typeof tg.openTelegramLink === 'function') {
+      const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(currentReel.url)}&text=${encodeURIComponent('🎬 Check out this reel!')}`;
+      tg.openTelegramLink(shareUrl);
+      showToast('Opening Telegram share... ✈️');
+      return;
+    }
 
+    // 2. If modern Web Share API is available (Mobile/Desktop)
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: 'ReelStream',
+          text: '🎬 Watch this reel!',
+          url: currentReel.url
+        });
+        showToast('Shared successfully! ✨');
+        return;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+
+    // 3. Fallback: Copy direct URL to clipboard
     try {
-      const res = await fetch('/api/send_to_inbox', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          init_data: initData,
-          chat_id: chatId,
-          reel_url: currentReel.url
-        })
-      });
-      const data = await res.json();
-      if (data.success) {
-        if (tg?.HapticFeedback) {
-          tg.HapticFeedback.notificationOccurred('success');
-        }
-        showToast('Video sent to your Telegram inbox! 📥');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(currentReel.url);
+        showToast('Video link copied to clipboard! 📋');
       } else {
-        if (tg?.HapticFeedback) {
-          tg.HapticFeedback.notificationOccurred('warning');
-        }
-        showToast(data.error || 'Could not deliver video');
+        const tempInput = document.createElement('input');
+        tempInput.value = currentReel.url;
+        document.body.appendChild(tempInput);
+        tempInput.select();
+        document.execCommand('copy');
+        document.body.removeChild(tempInput);
+        showToast('Video link copied to clipboard! 📋');
       }
     } catch (err) {
-      console.warn('Inbox request error:', err);
-      showToast('Failed to reach server');
-    } finally {
-      setTimeout(() => { isSendingInbox = false; }, 1000);
+      console.warn('Clipboard write failed:', err);
+      showToast('Could not copy link');
     }
   });
 }
@@ -620,65 +626,22 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Resilient Telegram & Mobile Access Check (No False 403s Inside Telegram)
-function checkTelegramAccess() {
-  const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-  if (isLocal) return true;
-
-  const tg = window.Telegram?.WebApp;
-  const ua = navigator.userAgent || '';
-
-  // Check all signals of Telegram or in-app context
-  const isInsideTelegram = Boolean(
-    (tg && (
-      (tg.initData && tg.initData.length > 0) ||
-      (tg.initDataUnsafe && Object.keys(tg.initDataUnsafe).length > 0) ||
-      (tg.platform && tg.platform !== 'unknown') ||
-      (tg.version && parseFloat(tg.version) > 0)
-    )) ||
-    /Telegram/i.test(ua) ||
-    window.location.hash.includes('tgWebAppData') ||
-    window.location.search.includes('tgWebApp')
-  );
-
-  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
-
-  return isInsideTelegram || isMobile;
-}
-
-// Initialize Application
+// Initialize Application (Pure Static Client)
 async function init() {
-  const isAllowed = checkTelegramAccess();
-  if (!isAllowed) {
-    document.getElementById('telegramGate').style.display = 'flex';
-    document.getElementById('playerApp').style.display = 'none';
-    return;
-  }
-
-  // Instantly grant access
-  document.getElementById('telegramGate').style.display = 'none';
-  document.getElementById('playerApp').style.display = 'flex';
-
   const tg = window.Telegram?.WebApp;
   if (tg) {
     if (tg.ready) tg.ready();
     if (tg.expand) tg.expand();
     if (tg.setHeaderColor) tg.setHeaderColor('#000000');
     if (tg.setBackgroundColor) tg.setBackgroundColor('#000000');
-    document.title = 'Reels';
-  }
-
-  // Non-blocking background session verification
-  if (tg?.initData) {
-    fetch('/api/validate_twa', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ init_data: tg.initData })
-    }).catch(() => {});
+    document.title = 'ReelStream';
   }
 
   try {
     const res = await fetch('reels.json');
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
     allUrls = await res.json();
 
     const firstReel = pickRandomReel();
@@ -689,6 +652,7 @@ async function init() {
     }
   } catch (err) {
     console.error('Failed to load reels.json:', err);
+    showToast('Failed to load reel catalog ⚠️');
   }
 }
 
