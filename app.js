@@ -1,5 +1,5 @@
 // ==========================================================================
-// ReelStream - Single View & Unified Live Watch Together (Finger Swipe Enabled)
+// ReelStream - Ultra-Smooth Native Dual-Slot Video Player
 // ==========================================================================
 
 let allUrls = [];
@@ -7,32 +7,27 @@ const history = [];
 let historyPointer = -1;
 let nextPreloadedReel = null;
 let isMuted = true;
+let isTransitioning = false;
 
-// Local storage
+// Local storage for Likes and Comments
 const STORAGE_LIKES = 'reelstream_likes';
 const STORAGE_COMMENTS = 'reelstream_comments';
 const myLikedIds = new Set(JSON.parse(localStorage.getItem(STORAGE_LIKES) || '[]'));
 const localComments = JSON.parse(localStorage.getItem(STORAGE_COMMENTS) || '{}');
 
-// Live Room State
-let socket = null;
-let isWatchTogether = false;
-let onlineCount = 1;
-let liveComments = [];
-let liveReelLikes = {}; // str(reel_id) -> real count
-
 // DOM Elements
 const playerStage = document.getElementById('playerStage');
-const activeVideo = document.getElementById('activeVideo');
-const preloadVideo = document.getElementById('preloadVideo');
+const videoCarousel = document.getElementById('videoCarousel');
+const slotA = document.getElementById('slotA');
+const slotB = document.getElementById('slotB');
+const videoA = document.getElementById('videoA');
+const videoB = document.getElementById('videoB');
+
 const stageSpinner = document.getElementById('stageSpinner');
 const centerIndicator = document.getElementById('centerIndicator');
 const heartBurst = document.getElementById('heartBurst');
 const btnAudioToggle = document.getElementById('btnAudioToggle');
 const audioIcon = document.getElementById('audioIcon');
-const btnModeToggle = document.getElementById('btnModeToggle');
-const statusDot = document.getElementById('statusDot');
-const modeLabel = document.getElementById('modeLabel');
 
 const btnLove = document.getElementById('btnLove');
 const loveIcon = document.getElementById('loveIcon');
@@ -42,10 +37,6 @@ const commentsCount = document.getElementById('commentsCount');
 const btnSendInbox = document.getElementById('btnSendInbox');
 const scrubberBar = document.getElementById('scrubberBar');
 const scrubberFill = document.getElementById('scrubberFill');
-
-const msgPopup = document.getElementById('msgPopup');
-const msgPopupSender = document.getElementById('msgPopupSender');
-const msgPopupText = document.getElementById('msgPopupText');
 
 const commentsOverlay = document.getElementById('commentsOverlay');
 const btnCloseComments = document.getElementById('btnCloseComments');
@@ -60,8 +51,26 @@ const kbBtnBackspace = document.getElementById('kbBtnBackspace');
 const kbBtnSpace = document.getElementById('kbBtnSpace');
 const kbBtnClear = document.getElementById('kbBtnClear');
 const kbBtnSend = document.getElementById('kbBtnSend');
-const commentsSubtitle = document.getElementById('commentsSubtitle');
 const toastPopup = document.getElementById('toastPopup');
+
+// Dual-Slot State: 0 -> slotA is active, 1 -> slotB is active
+let activeSlotIndex = 0;
+
+function getActiveSlot() {
+  return activeSlotIndex === 0 ? slotA : slotB;
+}
+
+function getInactiveSlot() {
+  return activeSlotIndex === 0 ? slotB : slotA;
+}
+
+function getActiveVideo() {
+  return activeSlotIndex === 0 ? videoA : videoB;
+}
+
+function getInactiveVideo() {
+  return activeSlotIndex === 0 ? videoB : videoA;
+}
 
 // Toast Notification
 function showToast(msg) {
@@ -72,28 +81,7 @@ function showToast(msg) {
   }, 2200);
 }
 
-// Show Actual Incoming Message
-let msgPopupTimer = null;
-function showIncomingMessage(sender, text) {
-  if (!msgPopup) return;
-  msgPopupSender.textContent = sender || 'Partner';
-  msgPopupText.textContent = text;
-  msgPopup.classList.add('visible');
-
-  if (msgPopupTimer) clearTimeout(msgPopupTimer);
-  msgPopupTimer = setTimeout(() => {
-    msgPopup.classList.remove('visible');
-  }, 4500);
-}
-
-if (msgPopup) {
-  msgPopup.addEventListener('click', () => {
-    msgPopup.classList.remove('visible');
-    openComments();
-  });
-}
-
-// Random Reel Picker (Pure URL, Zero Fake Reacts)
+// Random Reel Picker
 function pickRandomReel() {
   if (allUrls.length === 0) return null;
   const randomIndex = Math.floor(Math.random() * allUrls.length);
@@ -103,17 +91,21 @@ function pickRandomReel() {
   };
 }
 
-// Background Preload
+// Background Preload into Inactive Slot
 function prepareNextPreload() {
   nextPreloadedReel = pickRandomReel();
   if (nextPreloadedReel) {
-    preloadVideo.src = nextPreloadedReel.url;
-    preloadVideo.load();
+    const inactiveVid = getInactiveVideo();
+    if (inactiveVid.src !== nextPreloadedReel.url) {
+      inactiveVid.src = nextPreloadedReel.url;
+      inactiveVid.muted = true;
+      inactiveVid.preload = 'auto';
+      inactiveVid.load();
+    }
   }
 }
 
-// Play Reel on Stage with Error Auto-Skip Watchdog
-let animTimeout = null;
+// Video Watchdog & Error Auto-Skip
 let videoWatchdogTimer = null;
 let isAutoSkipping = false;
 
@@ -139,7 +131,8 @@ function handleVideoPlaybackError(reason = 'error') {
   }, 350);
 }
 
-function playReel(reel, notifyServer = true, direction = null) {
+// Play / Transition Reel with Silky Native Dual-Slot Animation
+function playReel(reel, direction = null) {
   if (!reel) {
     handleVideoPlaybackError('empty_reel');
     return;
@@ -148,52 +141,132 @@ function playReel(reel, notifyServer = true, direction = null) {
   cancelWatchdog();
   stageSpinner.style.opacity = '1';
 
-  // Simple, sleek transition animation on reel changes
-  if (direction === 'next' || direction === 'prev') {
-    activeVideo.classList.remove('anim-slide-next', 'anim-slide-prev');
-    void activeVideo.offsetWidth; // Force reflow
-    activeVideo.classList.add(direction === 'next' ? 'anim-slide-next' : 'anim-slide-prev');
+  // Initial load without slide transition
+  if (!direction) {
+    const activeSlot = getActiveSlot();
+    const activeVid = getActiveVideo();
 
-    if (animTimeout) clearTimeout(animTimeout);
-    animTimeout = setTimeout(() => {
-      activeVideo.classList.remove('anim-slide-next', 'anim-slide-prev');
-    }, 320);
+    activeSlot.className = 'video-slot active-slot';
+    activeSlot.style.transform = '';
+    activeSlot.style.opacity = '1';
+    activeSlot.style.filter = '';
+
+    activeVid.src = reel.url;
+    activeVid.muted = isMuted;
+
+    activeVid.play().then(() => {
+      cancelWatchdog();
+      stageSpinner.style.opacity = '0';
+    }).catch(() => {
+      stageSpinner.style.opacity = '0';
+    });
+
+    centerIndicator.classList.remove('active');
+    updateSideRailUI(reel);
+    prepareNextPreload();
+    return;
   }
 
-  activeVideo.src = reel.url;
-  activeVideo.muted = isMuted;
+  if (isTransitioning) return;
+  isTransitioning = true;
 
-  // 4.5s watchdog timer in case video stalls or fails to respond
+  const currSlot = getActiveSlot();
+  const incomingSlot = getInactiveSlot();
+  const currVideo = getActiveVideo();
+  const incomingVideo = getInactiveVideo();
+
+  // Ensure target URL is assigned to incoming video
+  if (incomingVideo.src !== reel.url) {
+    incomingVideo.src = reel.url;
+  }
+  incomingVideo.muted = isMuted;
+  incomingVideo.currentTime = 0;
+
+  // Reset classes and inline styles before starting animation
+  incomingSlot.classList.remove('is-animating', 'slide-in-center', 'slide-out-top', 'slide-out-bottom');
+  currSlot.classList.remove('is-animating', 'slide-in-center', 'slide-out-top', 'slide-out-bottom');
+
+  incomingSlot.style.transition = 'none';
+  currSlot.style.transition = 'none';
+  incomingSlot.style.opacity = '1';
+  incomingSlot.style.filter = 'brightness(1)';
+  currSlot.style.filter = 'brightness(1)';
+
+  if (direction === 'next') {
+    incomingSlot.style.transform = 'translate3d(0, 100%, 0)';
+  } else {
+    incomingSlot.style.transform = 'translate3d(0, -100%, 0)';
+  }
+  incomingSlot.classList.add('has-depth-shadow');
+
+  // Force reflow to commit initial positions
+  void incomingSlot.offsetWidth;
+
+  // Start incoming video playback immediately
+  incomingVideo.play().then(() => {
+    cancelWatchdog();
+    stageSpinner.style.opacity = '0';
+  }).catch(() => {
+    stageSpinner.style.opacity = '0';
+  });
+
+  // Apply silky spring transition
+  incomingSlot.classList.add('is-animating');
+  currSlot.classList.add('is-animating');
+
+  if (direction === 'next') {
+    currSlot.classList.add('slide-out-top');
+    incomingSlot.classList.add('slide-in-center');
+  } else {
+    currSlot.classList.add('slide-out-bottom');
+    incomingSlot.classList.add('slide-in-center');
+  }
+
+  // Telegram native haptic feedback
+  if (window.Telegram?.WebApp?.HapticFeedback) {
+    window.Telegram.WebApp.HapticFeedback.impactOccurred('light');
+  }
+
+  // Animation completion
+  setTimeout(() => {
+    currVideo.pause();
+
+    // Clean up slots
+    currSlot.className = 'video-slot';
+    currSlot.style.transform = '';
+    currSlot.style.opacity = '0';
+    currSlot.style.filter = '';
+    currSlot.classList.remove('has-depth-shadow', 'is-animating', 'slide-out-top', 'slide-out-bottom');
+
+    incomingSlot.className = 'video-slot active-slot';
+    incomingSlot.style.transform = '';
+    incomingSlot.style.opacity = '1';
+    incomingSlot.style.filter = '';
+    incomingSlot.classList.remove('has-depth-shadow', 'is-animating', 'slide-in-center');
+
+    // Swap active slot pointer
+    activeSlotIndex = 1 - activeSlotIndex;
+    isTransitioning = false;
+
+    centerIndicator.classList.remove('active');
+    updateSideRailUI(reel);
+
+    // Buffer the next reel into the now-inactive slot
+    prepareNextPreload();
+  }, 390);
+
+  // 4.5s watchdog timer in case video stalls or fails
   videoWatchdogTimer = setTimeout(() => {
-    if (activeVideo.readyState < 2 && (activeVideo.paused || activeVideo.currentTime === 0)) {
+    const actVid = getActiveVideo();
+    if (actVid.readyState < 2 && (actVid.paused || actVid.currentTime === 0)) {
       handleVideoPlaybackError('timeout');
     }
   }, 4500);
-
-  activeVideo.play().then(() => {
-    cancelWatchdog();
-    stageSpinner.style.opacity = '0';
-  }).catch((err) => {
-    if (err && err.name !== 'AbortError' && err.name !== 'NotAllowedError') {
-      handleVideoPlaybackError(err.message || 'play_error');
-    } else {
-      stageSpinner.style.opacity = '0';
-    }
-  });
-
-  centerIndicator.classList.remove('active');
-  updateSideRailUI(reel);
-
-  if (isWatchTogether && notifyServer && socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({
-      type: 'change_reel',
-      reel: reel
-    }));
-  }
 }
 
 // Update Side Rail Controls
 function updateSideRailUI(reel) {
+  if (!reel) return;
   const isLovedByMe = myLikedIds.has(reel.id);
 
   if (isLovedByMe) {
@@ -204,123 +277,91 @@ function updateSideRailUI(reel) {
     loveIcon.setAttribute('fill', 'none');
   }
 
-  let count = 0;
-  if (isWatchTogether) {
-    count = liveReelLikes[reel.id] || (isLovedByMe ? 1 : 0);
-  } else {
-    count = isLovedByMe ? 1 : 0;
-  }
-  loveCount.textContent = count;
-
-  const cCount = isWatchTogether ? liveComments.length : (localComments[reel.id] || []).length;
+  loveCount.textContent = isLovedByMe ? 1 : 0;
+  const cCount = (localComments[reel.id] || []).length;
   commentsCount.textContent = cCount;
 }
 
 // Navigate Next (Random + Preloaded)
 function goNext() {
+  if (isTransitioning) return;
   if (historyPointer < history.length - 1) {
     historyPointer++;
     const reel = history[historyPointer];
-    playReel(reel, true, 'next');
+    playReel(reel, 'next');
   } else {
     const reel = nextPreloadedReel || pickRandomReel();
     history.push(reel);
     historyPointer = history.length - 1;
-    playReel(reel, true, 'next');
-    prepareNextPreload();
+    playReel(reel, 'next');
   }
 }
 
 // Navigate Previous
 function goPrevious() {
+  if (isTransitioning) return;
   if (historyPointer > 0) {
     historyPointer--;
     const reel = history[historyPointer];
-    playReel(reel, true, 'prev');
+    playReel(reel, 'prev');
   } else {
     showToast('First reel in session');
   }
 }
 
-// Love React Toggle (Real Reactions Only)
-function toggleLove(fromPartner = false) {
+// Love React Toggle
+function toggleLove() {
   if (historyPointer < 0 || !history[historyPointer]) return;
   const currentReel = history[historyPointer];
   const isLoved = myLikedIds.has(currentReel.id);
 
-  if (fromPartner) {
-    heartBurst.classList.remove('animate');
-    void heartBurst.offsetWidth;
-    heartBurst.classList.add('animate');
-    updateSideRailUI(currentReel);
-    return;
-  }
-
-  let delta = 1;
   if (isLoved) {
     myLikedIds.delete(currentReel.id);
-    delta = -1;
   } else {
     myLikedIds.add(currentReel.id);
-    delta = 1;
     heartBurst.classList.remove('animate');
     void heartBurst.offsetWidth;
     heartBurst.classList.add('animate');
-  }
 
-  localStorage.setItem(STORAGE_LIKES, JSON.stringify([...myLikedIds]));
-
-  if (isWatchTogether) {
-    const prev = liveReelLikes[currentReel.id] || 0;
-    liveReelLikes[currentReel.id] = Math.max(0, prev + delta);
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
-        type: 'love_react',
-        reel_id: currentReel.id,
-        delta: delta
-      }));
+    if (window.Telegram?.WebApp?.HapticFeedback) {
+      window.Telegram.WebApp.HapticFeedback.impactOccurred('medium');
     }
   }
 
+  localStorage.setItem(STORAGE_LIKES, JSON.stringify([...myLikedIds]));
   updateSideRailUI(currentReel);
 }
 
-// Single / Double Tap Handling
+// Tap on Video for Play / Pause & Double-Tap for Love
 let lastTap = 0;
-activeVideo.addEventListener('click', () => {
+videoCarousel.addEventListener('click', (e) => {
+  // If clicked on controls, ignore
+  if (e.target.closest('.action-sidebar') || e.target.closest('.stage-header') || e.target.closest('.stage-scrubber')) {
+    return;
+  }
+
   const now = Date.now();
   if (now - lastTap < 300) {
-    toggleLove(false);
+    toggleLove();
     lastTap = 0;
   } else {
     lastTap = now;
     setTimeout(() => {
       if (lastTap === now) {
-        if (activeVideo.paused) {
-          activeVideo.play();
+        const vid = getActiveVideo();
+        if (vid.paused) {
+          vid.play();
           centerIndicator.classList.remove('active');
-          syncPlayPause(false);
         } else {
-          activeVideo.pause();
+          vid.pause();
           centerIndicator.classList.add('active');
-          syncPlayPause(true);
         }
       }
     }, 305);
   }
 });
 
-function syncPlayPause(isPaused) {
-  if (isWatchTogether && socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({
-      type: 'play_pause',
-      is_paused: isPaused
-    }));
-  }
-}
-
-// Button Clicks
-btnLove.addEventListener('click', () => toggleLove(false));
+btnLove.addEventListener('click', toggleLove);
 
 // Send Video to Telegram Inbox via Bot
 if (btnSendInbox) {
@@ -366,31 +407,114 @@ if (btnSendInbox) {
 }
 
 // ==========================================================================
-// Finger Swipe Detection (Smooth Mobile & Touch Gestures)
+// Interactive Touch Gestures (Drag-to-follow physics)
 // ==========================================================================
 let touchStartY = 0;
 let touchStartX = 0;
 let touchStartTime = 0;
+let isDraggingTouch = false;
 
 playerStage.addEventListener('touchstart', (e) => {
+  if (isTransitioning || commentsOverlay.classList.contains('open')) return;
   touchStartY = e.touches[0].clientY;
   touchStartX = e.touches[0].clientX;
   touchStartTime = Date.now();
+  isDraggingTouch = false;
 }, { passive: true });
 
-playerStage.addEventListener('touchend', (e) => {
-  const deltaY = e.changedTouches[0].clientY - touchStartY;
-  const deltaX = e.changedTouches[0].clientX - touchStartX;
-  const timeDiff = Date.now() - touchStartTime;
+playerStage.addEventListener('touchmove', (e) => {
+  if (isTransitioning || commentsOverlay.classList.contains('open')) return;
+  const currentY = e.touches[0].clientY;
+  const currentX = e.touches[0].clientX;
+  const deltaY = currentY - touchStartY;
+  const deltaX = currentX - touchStartX;
 
-  // Vertical swipe threshold (min 40px and predominantly vertical)
-  if (Math.abs(deltaY) > 40 && Math.abs(deltaY) > Math.abs(deltaX) && timeDiff < 650) {
+  // Ignore if horizontal swipe
+  if (Math.abs(deltaX) > Math.abs(deltaY)) return;
+
+  if (Math.abs(deltaY) > 8) {
+    isDraggingTouch = true;
+    const currSlot = getActiveSlot();
+    const incomingSlot = getInactiveSlot();
+    const incomingVideo = getInactiveVideo();
+
+    currSlot.style.transition = 'none';
+    incomingSlot.style.transition = 'none';
+
     if (deltaY < 0) {
-      // Swipe Up -> Next Reel
+      // Dragging Up: Revealing Next
+      const candidateReel = (historyPointer < history.length - 1)
+        ? history[historyPointer + 1]
+        : (nextPreloadedReel || pickRandomReel());
+
+      if (candidateReel && incomingVideo.src !== candidateReel.url) {
+        incomingVideo.src = candidateReel.url;
+        incomingVideo.muted = isMuted;
+      }
+
+      incomingSlot.style.opacity = '1';
+      incomingSlot.classList.add('has-depth-shadow');
+      incomingSlot.style.transform = `translate3d(0, calc(100% + ${deltaY}px), 0)`;
+
+      const dragPct = Math.min(1, Math.abs(deltaY) / window.innerHeight);
+      currSlot.style.transform = `translate3d(0, ${deltaY * 0.42}px, 0) scale(${1 - dragPct * 0.08})`;
+      currSlot.style.opacity = `${1 - dragPct * 0.6}`;
+      currSlot.style.filter = `brightness(${1 - dragPct * 0.35})`;
+    } else if (deltaY > 0 && historyPointer > 0) {
+      // Dragging Down: Revealing Previous
+      const prevReel = history[historyPointer - 1];
+      if (prevReel && incomingVideo.src !== prevReel.url) {
+        incomingVideo.src = prevReel.url;
+        incomingVideo.muted = isMuted;
+      }
+
+      incomingSlot.style.opacity = '1';
+      incomingSlot.classList.add('has-depth-shadow');
+      incomingSlot.style.transform = `translate3d(0, calc(-100% + ${deltaY}px), 0)`;
+
+      const dragPct = Math.min(1, Math.abs(deltaY) / window.innerHeight);
+      currSlot.style.transform = `translate3d(0, ${deltaY * 0.42}px, 0) scale(${1 - dragPct * 0.08})`;
+      currSlot.style.opacity = `${1 - dragPct * 0.6}`;
+      currSlot.style.filter = `brightness(${1 - dragPct * 0.35})`;
+    }
+  }
+}, { passive: false });
+
+playerStage.addEventListener('touchend', (e) => {
+  if (isTransitioning || commentsOverlay.classList.contains('open')) return;
+  const deltaY = e.changedTouches[0].clientY - touchStartY;
+  const timeDiff = Date.now() - touchStartTime;
+  const isFlick = timeDiff < 300 && Math.abs(deltaY) > 40;
+
+  if (isDraggingTouch) {
+    isDraggingTouch = false;
+    if (deltaY < -60 || (isFlick && deltaY < 0)) {
       goNext();
-    } else {
-      // Swipe Down -> Previous Reel
+    } else if ((deltaY > 60 || (isFlick && deltaY > 0)) && historyPointer > 0) {
       goPrevious();
+    } else {
+      // Smoothly spring back to current reel
+      const currSlot = getActiveSlot();
+      const incomingSlot = getInactiveSlot();
+
+      currSlot.classList.add('is-animating');
+      incomingSlot.classList.add('is-animating');
+
+      currSlot.style.transform = 'translate3d(0, 0, 0) scale(1)';
+      currSlot.style.opacity = '1';
+      currSlot.style.filter = 'brightness(1)';
+
+      if (deltaY < 0) {
+        incomingSlot.style.transform = 'translate3d(0, 100%, 0)';
+      } else {
+        incomingSlot.style.transform = 'translate3d(0, -100%, 0)';
+      }
+
+      setTimeout(() => {
+        currSlot.classList.remove('is-animating');
+        incomingSlot.classList.remove('is-animating', 'has-depth-shadow');
+        incomingSlot.style.opacity = '0';
+      }, 300);
     }
   }
 }, { passive: true });
@@ -398,59 +522,60 @@ playerStage.addEventListener('touchend', (e) => {
 // Mouse Wheel Navigation with Throttle
 let wheelThrottle = false;
 window.addEventListener('wheel', (e) => {
-  if (wheelThrottle || commentsOverlay.classList.contains('open')) return;
+  if (wheelThrottle || isTransitioning || commentsOverlay.classList.contains('open')) return;
   if (Math.abs(e.deltaY) > 25) {
     wheelThrottle = true;
     if (e.deltaY > 0) goNext();
     else goPrevious();
-    setTimeout(() => { wheelThrottle = false; }, 380);
+    setTimeout(() => { wheelThrottle = false; }, 420);
   }
 }, { passive: true });
 
-// Video Buffering & Scrubbing
-activeVideo.addEventListener('waiting', () => { stageSpinner.style.opacity = '1'; });
-activeVideo.addEventListener('canplay', () => {
-  cancelWatchdog();
-  stageSpinner.style.opacity = '0';
-});
-activeVideo.addEventListener('playing', () => {
-  cancelWatchdog();
-  stageSpinner.style.opacity = '0';
-});
-activeVideo.addEventListener('error', () => {
-  handleVideoPlaybackError('media_error');
-});
-
-preloadVideo.addEventListener('error', () => {
-  prepareNextPreload();
-});
-
-activeVideo.addEventListener('timeupdate', () => {
-  if (activeVideo.duration) {
-    const pct = (activeVideo.currentTime / activeVideo.duration) * 100;
-    scrubberFill.style.width = `${pct}%`;
-  }
+// Video Buffering & Scrubbing on Both Elements
+[videoA, videoB].forEach((vid) => {
+  vid.addEventListener('waiting', () => {
+    if (vid === getActiveVideo()) stageSpinner.style.opacity = '1';
+  });
+  vid.addEventListener('canplay', () => {
+    if (vid === getActiveVideo()) {
+      cancelWatchdog();
+      stageSpinner.style.opacity = '0';
+    }
+  });
+  vid.addEventListener('playing', () => {
+    if (vid === getActiveVideo()) {
+      cancelWatchdog();
+      stageSpinner.style.opacity = '0';
+    }
+  });
+  vid.addEventListener('error', () => {
+    if (vid === getActiveVideo()) {
+      handleVideoPlaybackError('media_error');
+    }
+  });
+  vid.addEventListener('timeupdate', () => {
+    if (vid === getActiveVideo() && vid.duration) {
+      const pct = (vid.currentTime / vid.duration) * 100;
+      scrubberFill.style.width = `${pct}%`;
+    }
+  });
 });
 
 scrubberBar.addEventListener('click', (e) => {
   e.stopPropagation();
   const rect = scrubberBar.getBoundingClientRect();
   const pos = (e.clientX - rect.left) / rect.width;
-  if (activeVideo.duration) {
-    activeVideo.currentTime = pos * activeVideo.duration;
-    if (isWatchTogether && socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
-        type: 'seek',
-        time: activeVideo.currentTime
-      }));
-    }
+  const vid = getActiveVideo();
+  if (vid.duration) {
+    vid.currentTime = pos * vid.duration;
   }
 });
 
 // Audio Toggle
 btnAudioToggle.addEventListener('click', () => {
   isMuted = !isMuted;
-  activeVideo.muted = isMuted;
+  videoA.muted = isMuted;
+  videoB.muted = isMuted;
 
   if (isMuted) {
     audioIcon.innerHTML = `
@@ -460,19 +585,17 @@ btnAudioToggle.addEventListener('click', () => {
       <line x1="12" y1="19" x2="12" y2="23"></line>
       <line x1="8" y1="23" x2="16" y2="23"></line>
     `;
-    showToast('Muted');
+    showToast('Sound Muted 🔇');
   } else {
     audioIcon.innerHTML = `
       <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
       <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
     `;
-    showToast('Unmuted');
+    showToast('Sound On 🔊');
   }
 });
 
-// ==========================================================================
-// Comments Drawer (Live Synced in Watch Together)
-// ==========================================================================
+// Comments Drawer
 function openComments() {
   commentsOverlay.classList.add('open');
   renderComments();
@@ -493,20 +616,19 @@ function renderComments() {
   const currentReel = history[historyPointer];
   if (!currentReel) return;
 
-  const comments = isWatchTogether ? liveComments : (localComments[currentReel.id] || []);
+  const comments = localComments[currentReel.id] || [];
 
   if (comments.length === 0) {
     commentsList.innerHTML = `
       <div class="empty-comments">
-        ${isWatchTogether ? 'No live comments yet.<br>Chat with others watching live.' : 'No comments yet.<br>Write a comment below.'}
+        No comments yet.<br>Be the first to write a comment!
       </div>`;
     return;
   }
 
   comments.forEach(c => {
-    const isPartner = c.sender === 'Partner';
     const bubble = document.createElement('div');
-    bubble.className = `comment-bubble ${isPartner ? 'partner' : ''}`;
+    bubble.className = 'comment-bubble';
     bubble.innerHTML = `
       <div class="comment-author-tag">${escapeHtml(c.sender || 'You')}</div>
       <div class="comment-content">${escapeHtml(c.text)}</div>
@@ -576,19 +698,9 @@ function submitComment() {
     time: timeStr
   };
 
-  if (isWatchTogether) {
-    liveComments.unshift(commentObj);
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
-        type: 'comment',
-        comment: commentObj
-      }));
-    }
-  } else {
-    if (!localComments[currentReel.id]) localComments[currentReel.id] = [];
-    localComments[currentReel.id].unshift(commentObj);
-    localStorage.setItem(STORAGE_COMMENTS, JSON.stringify(localComments));
-  }
+  if (!localComments[currentReel.id]) localComments[currentReel.id] = [];
+  localComments[currentReel.id].unshift(commentObj);
+  localStorage.setItem(STORAGE_COMMENTS, JSON.stringify(localComments));
 
   clearCommentInput();
   renderComments();
@@ -596,7 +708,7 @@ function submitComment() {
   commentsList.scrollTop = 0;
 }
 
-// Built-in Keyboard Event Handling (On-screen taps)
+// Built-in Keyboard Event Handling
 if (builtInKeyboard) {
   builtInKeyboard.addEventListener('click', (e) => {
     const btn = e.target.closest('.kb-key');
@@ -637,180 +749,19 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-// ==========================================================================
-// Unified Single Live Room (Silent Auto-Connect for Solo Users)
-// ==========================================================================
-function connectLiveRoom() {
-  isWatchTogether = true;
-
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/ws/live`;
-
-  if (socket) {
-    try { socket.close(); } catch (e) {}
-  }
-
-  socket = new WebSocket(wsUrl);
-
-  socket.onopen = () => {
-    // If client is sole viewer, announce current reel so room holds it
-    if (historyPointer >= 0 && history[historyPointer] && onlineCount <= 1) {
-      socket.send(JSON.stringify({
-        type: 'change_reel',
-        reel: history[historyPointer]
-      }));
-    }
-  };
-
-  socket.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      handleLiveMessage(data);
-    } catch (err) {
-      console.error('Socket message parse error:', err);
-    }
-  };
-
-  socket.onclose = () => {
-    // Reconnect silently in background without bothering solo user
-    setTimeout(() => {
-      connectLiveRoom();
-    }, 2500);
-  };
-}
-
-function handleLiveMessage(data) {
-  switch (data.type) {
-    case 'init_state':
-      if (data.online_count && data.online_count >= 2) {
-        // Partner is already in the room: sync to room's reel immediately
-        if (data.current_reel) {
-          history.push(data.current_reel);
-          historyPointer = history.length - 1;
-          playReel(data.current_reel, false);
-        }
-      } else {
-        // Single user: keep playing our own reel and notify room
-        if (historyPointer >= 0 && history[historyPointer] && socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({
-            type: 'change_reel',
-            reel: history[historyPointer]
-          }));
-        }
-      }
-
-      if (data.comments) {
-        liveComments = data.comments;
-        renderComments();
-      }
-      if (data.reel_likes) {
-        liveReelLikes = data.reel_likes;
-        if (history[historyPointer]) updateSideRailUI(history[historyPointer]);
-      }
-      updatePresence(data.online_count || 1);
-      if (data.online_count >= 2) {
-        showToast('Partner online! Watching together 🎬');
-      }
-      break;
-
-    case 'presence_update':
-      const prevCount = onlineCount;
-      updatePresence(data.online_count);
-      if (data.online_count >= 2 && prevCount < 2) {
-        showToast('Partner connected! Watching together 🎬');
-      } else if (data.online_count < 2 && prevCount >= 2) {
-        showToast('Partner went offline — Solo mode');
-      }
-      break;
-
-    case 'sync_reel':
-      history.push(data.reel);
-      historyPointer = history.length - 1;
-      playReel(data.reel, false, 'next');
-      prepareNextPreload();
-      break;
-
-    case 'sync_play_pause':
-      if (data.is_paused) {
-        activeVideo.pause();
-        centerIndicator.classList.add('active');
-      } else {
-        activeVideo.play();
-        centerIndicator.classList.remove('active');
-      }
-      break;
-
-    case 'sync_seek':
-      if (typeof data.time === 'number') {
-        activeVideo.currentTime = data.time;
-      }
-      break;
-
-    case 'sync_love':
-      liveReelLikes[data.reel_id] = data.count;
-      toggleLove(true);
-      showToast('Partner loved this reel ❤️');
-      break;
-
-    case 'sync_comment':
-      liveComments.unshift({
-        sender: 'Partner',
-        text: data.comment.text,
-        time: data.comment.time
-      });
-      renderComments();
-      updateSideRailUI(history[historyPointer]);
-      
-      // Instead of generic "new message incoming", display the ACTUAL message text!
-      if (!commentsOverlay.classList.contains('open')) {
-        showIncomingMessage('Partner', data.comment.text);
-      }
-      break;
-  }
-}
-
-function updatePresence(count) {
-  onlineCount = count;
-  if (count >= 2) {
-    btnModeToggle.classList.add('active-live');
-    statusDot.className = 'status-dot connected';
-    modeLabel.textContent = `Watching Together (${count}) 🟢`;
-    commentsSubtitle.textContent = `Live synchronized with ${count} viewers`;
-  } else {
-    btnModeToggle.classList.remove('active-live');
-    statusDot.className = 'status-dot';
-    modeLabel.textContent = 'Solo';
-    commentsSubtitle.textContent = 'Comments';
-  }
-}
-
-// Mode Button shows live connection status
-btnModeToggle.addEventListener('click', () => {
-  if (onlineCount >= 2) {
-    showToast(`Watching together live (${onlineCount} online) 🟢`);
-  } else {
-    showToast('Solo mode — auto-connects when partner joins');
-  }
-});
-
-// Keyboard Navigation & Typing
+// Keyboard Navigation
 window.addEventListener('keydown', (e) => {
-  // If comments drawer is open, handle typing through custom input
   if (commentsOverlay.classList.contains('open')) {
     if (e.key === 'Backspace') {
       e.preventDefault();
       deleteCommentChar();
-      return;
     } else if (e.key === 'Enter') {
       e.preventDefault();
       submitComment();
-      return;
     } else if (e.key === 'Escape') {
       closeComments();
-      return;
     } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
       appendCommentChar(e.key);
-      return;
     }
     return;
   }
@@ -824,19 +775,18 @@ window.addEventListener('keydown', (e) => {
     goPrevious();
   } else if (e.key === ' ') {
     e.preventDefault();
-    if (activeVideo.paused) {
-      activeVideo.play();
+    const vid = getActiveVideo();
+    if (vid.paused) {
+      vid.play();
       centerIndicator.classList.remove('active');
-      syncPlayPause(false);
     } else {
-      activeVideo.pause();
+      vid.pause();
       centerIndicator.classList.add('active');
-      syncPlayPause(true);
     }
   } else if (key === 'm') {
     btnAudioToggle.click();
   } else if (key === 'l') {
-    toggleLove(false);
+    toggleLove();
   } else if (key === 'c') {
     if (commentsOverlay.classList.contains('open')) closeComments();
     else openComments();
@@ -850,7 +800,6 @@ async function verifyTelegramWebApp() {
   const tg = window.Telegram?.WebApp;
   const initData = tg?.initData;
 
-  // Check if opened directly in a browser
   if (!initData) {
     const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
     if (isLocal) {
@@ -858,13 +807,11 @@ async function verifyTelegramWebApp() {
       document.getElementById('playerApp').style.display = 'flex';
       return true;
     }
-    // Block direct access in browser
     document.getElementById('telegramGate').style.display = 'flex';
     document.getElementById('playerApp').style.display = 'none';
     return false;
   }
 
-  // Validate cryptographic HMAC signature with backend
   try {
     const res = await fetch('/api/validate_twa', {
       method: 'POST',
@@ -886,7 +833,6 @@ async function verifyTelegramWebApp() {
     console.error('Telegram validation error:', err);
   }
 
-  // If signature invalid or tampered
   document.getElementById('telegramGate').style.display = 'flex';
   document.getElementById('playerApp').style.display = 'none';
   return false;
@@ -896,25 +842,19 @@ async function verifyTelegramWebApp() {
 async function init() {
   const isAllowed = await verifyTelegramWebApp();
   if (!isAllowed) {
-    return; // Block direct access
+    return;
   }
 
   try {
     const res = await fetch('reels.json');
     allUrls = await res.json();
 
-    // Start playback with a random reel immediately
     const firstReel = pickRandomReel();
     if (firstReel) {
       history.push(firstReel);
       historyPointer = 0;
-      playReel(firstReel, false);
+      playReel(firstReel, null);
     }
-    prepareNextPreload();
-
-    // Automatically connect to live room immediately!
-    // If 2 users are online, they connect together automatically without clicking anything!
-    connectLiveRoom();
   } catch (err) {
     console.error('Failed to load reels.json:', err);
   }

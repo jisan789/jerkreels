@@ -1,26 +1,26 @@
-# 🎬 ReelStream — Minimalist Solo & Shared Live Video Player
+# 🎬 ReelStream — Minimalist Smooth Reel Video Player
 
-A clean, responsive, zero-swipe vertical video player for streaming random reels solo or together with others in a single shared live room.
+A sleek, responsive, zero-flicker vertical video player for streaming random reels with native dual-slot transitions and finger-drag physics.
 
 ---
 
 ## ✨ Features
 
-- **No Separate Rooms**: There is only **one single shared live room**. No room creation, no room codes, and no passwords.
-- **Two Seamless Modes**:
-  - **Single View (Solo)**: Browse and watch random preloaded reels on your own.
-  - **Watch Together**: Toggle "Watch Together" to automatically connect to the live room. Whenever someone else turns on Watch Together, you are instantly connected together!
-- **Real-Time Live Synchronization**:
-  - **Reel Sync**: When anyone in the live room clicks Next (<kbd>↓</kbd>) or Prev (<kbd>↑</kbd>), the exact same reel plays for everyone in real time.
-  - **Love React Sync**: Double-tap and heart reacts trigger on all live viewers' screens with real-time count.
-  - **Live Comments**: Comments are broadcast live to all active viewers.
-  - **Presence Indicator**: Live status badge displays the count of connected viewers (`Live (2 online) 🟢`).
-- **Zero-Swipe Fixed Stage**:
-  - Pure video viewing with zero touch-drag lag or scrolling stutters.
-  - Simple Up & Down button navigation.
+- **Dual-Slot Smooth Transition Engine**:
+  - Zero black-screen flash or decoder lag when switching reels.
+  - Active video glides out while the incoming video slides smoothly in with native spring physics (`cubic-bezier(0.2, 0.95, 0.25, 1)`).
   - Background preloading of the next random reel for instant playback.
+- **Finger Swipe & Drag-to-Follow Gestures**:
+  - Drag up or down on touch devices with real-time responsive tracking.
+  - Momentum flick detection and rubber-band springback.
+- **Micro-Interactions & Haptic Feedback**:
+  - Native Telegram Web App haptic feedback on reel changes and double-tap love reactions.
+  - Double-tap animated heart pop burst.
+- **Direct Telegram Bot Inbox**:
+  - One-tap "Inbox" button to send the current video directly to your Telegram bot chat.
 - **Clean Architecture**:
-  - Python backend (`FastAPI` + `Uvicorn` + `WebSockets`) with zero Node.js dependencies.
+  - Python backend (`FastAPI` + `Uvicorn`) with Telegram WebApp HMAC verification.
+  - Vanilla JS + CSS3 hardware-accelerated animations.
 
 ---
 
@@ -33,20 +33,16 @@ python server.py
 Open in your browser:
 👉 **[http://localhost:3000](http://localhost:3000)**
 
-- By default, you start in **Single View**.
-- Click **"Watch Together"** in the top-right corner to automatically join the live room with other viewers.
-- Click it again to return to **Single View** anytime.
-
 ---
 
 ## ⌨️ Controls & Keyboard Shortcuts
 
 | Control | Action |
 | --- | --- |
-| <kbd>↓</kbd> or <kbd>J</kbd> | Next Random Reel (Synced live when in Watch Together) |
+| <kbd>↓</kbd> or <kbd>J</kbd> | Next Random Reel (Smooth Transition) |
 | <kbd>↑</kbd> or <kbd>K</kbd> | Previous Reel (Session History) |
-| <kbd>Space</kbd> or Tap | Play / Pause (Synced live) |
-| Double Tap on Screen | Love React (Heart burst on all screens) |
+| <kbd>Space</kbd> or Tap | Play / Pause |
+| Double Tap on Screen | Love React (Heart burst) |
 | <kbd>L</kbd> | Love React Toggle |
 | <kbd>M</kbd> | Audio Mute / Unmute |
-| <kbd>C</kbd> | Open Live Comments Drawer |
+| <kbd>C</kbd> | Open Comments Drawer |
